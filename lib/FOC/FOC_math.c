@@ -46,6 +46,32 @@ float fast_cos(float theta) {
     return cos_lut[index] * (1.0f - frac) + cos_lut[next_index] * frac;
 }
 
+float fast_atan2(float y, float x) {
+    if (x == 0.0f) {
+        return (y > 0.0f) ? PI/2.0f : -PI/2.0f;
+    }
+    
+    float abs_x = fabsf(x);
+    float abs_y = fabsf(y);
+    float a = fminf(abs_x, abs_y) / fmaxf(abs_x, abs_y);
+    float s = a * a;
+    float r = ((-0.0464964749f * s + 0.15931422f) * s - 0.327622764f) * s * a + a;
+    
+    if (abs_y > abs_x) {
+        r = PI/2.0f - r;
+    }
+    
+    if (x < 0.0f) {
+        r = PI - r;
+    }
+    
+    if (y < 0.0f) {
+        r = -r;
+    }
+    
+    return r;
+}
+
 void pre_calc_sin_cos(float theta, float *sin_theta, float *cos_theta) {
     *sin_theta = fast_sin(theta);
     *cos_theta = fast_cos(theta);
@@ -188,3 +214,24 @@ void svpwm(float valpha, float vbeta, float vbus, uint32_t pwm_period,
     *pwm_w = (*pwm_w > pwm_period) ? pwm_period : *pwm_w;
 }
 
+// Operasi bilangan kompleks
+complex_t complex_multiply(complex_t a, complex_t b) {
+    complex_t result;
+    result.real = a.real * b.real - a.imag * b.imag;
+    result.imag = a.real * b.imag + a.imag * b.real;
+    return result;
+}
+
+complex_t complex_add(complex_t a, complex_t b) {
+    complex_t result;
+    result.real = a.real + b.real;
+    result.imag = a.imag + b.imag;
+    return result;
+}
+
+complex_t complex_subtract(complex_t a, complex_t b) {
+    complex_t result;
+    result.real = a.real - b.real;
+    result.imag = a.imag - b.imag;
+    return result;
+}

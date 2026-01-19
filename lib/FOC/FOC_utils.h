@@ -9,11 +9,17 @@
 #define FOC_INC_FOC_UTILS_H_
 
 #include <stdint.h>
+#include "FOC_config.h"
 #include "FOC_math.h"
 #include "pid_utils.h"
 #include "sliding_mode_observer.h"
 #include "pll.h"
 #include "lpf.h"
+#if HFI_NEW
+#include "hfi_sdft.h"
+#else
+#include "hfi_lpf.h"
+#endif
 
 #define ERROR_LUT_SIZE (1024)
 
@@ -28,12 +34,6 @@
 #define is_foc_ready() (foc_ready)
 #define foc_reset_flag() (foc_ready = 0)
 #define foc_set_flag() (foc_ready = 1)
-
-#define MAX_I_SAMPLE 128
-
-#define MAX_SAMPLE_BUFF 1024
-
-#define DEBUG_HFI	0
 
 /* extern variable */
 extern _Bool foc_ready;
@@ -109,6 +109,7 @@ typedef struct {
 	float v_bus;
 	float i_bus;
 
+	float rpm_temp;
 	float actual_rpm;
 	float actual_angle;
 
@@ -139,9 +140,17 @@ typedef struct {
 	startup_state_t startup_state;
 	motor_state_t state;
 
+	smo_t smo;
+#if HFI_NEW
+	hfi_t hfi;
+#else
+	hfi_lpf_t hfi_lpf;
+#endif
+
 	// test HFI
 	float phase_h;
-	float v_h;
+	float v_h; // amplitudo
+	float f_h; // frequency 
 	float omega_h;
 	float alpha_filter_h;
 	float i_alpha_l; // low-frequency / fundamental
@@ -177,7 +186,8 @@ void meas_inj_dq_process(foc_t *hfoc, float ts);
 void estimate_resistance(foc_t *hfoc);
 void estimate_inductance(foc_t *hfoc, float ts);
 int foc_startup_rotor(foc_t *hfoc, smo_t *hsmo, _Bool dir, float dt);
-void foc_current_control_update_hfi(foc_t *hfoc, float Ts);
-void foc_hfi_init(foc_t *hfoc, float v_h, float f_h, float lpf_fc, float Ts);
+
+void foc_sensorless_init(foc_t *hfoc, float sampling_freq);
+void foc_sensorless_current_control_update(foc_t *hfoc, float Ts);
 
 #endif /* FOC_INC_FOC_UTILS_H_ */

@@ -134,108 +134,6 @@ void foc_current_control_update(foc_t *hfoc) {
     *(hfoc->pwm_c) = CONSTRAIN(dc, 0, hfoc->pwm_res);
 }
 
-void foc_current_control_update_hfi(foc_t *hfoc, float Ts) {
-	if (hfoc == NULL || hfoc->control_mode == AUDIO_MODE) {
-		hfoc->id_ctrl.integral = 0.0f;
-		hfoc->id_ctrl.last_error = 0.0f;
-		hfoc->iq_ctrl.integral = 0.0f;
-		hfoc->iq_ctrl.last_error = 0.0f;
-		return;
-	}
-
-	float id_ref = hfoc->id_ref;
-	float iq_ref = hfoc->iq_ref;
-
-    // Hard limit references
-    id_ref = CONSTRAIN(id_ref, -hfoc->max_current, hfoc->max_current);
-    iq_ref = CONSTRAIN(iq_ref, -hfoc->max_current, hfoc->max_current);
-
-    // pre calculate sin & cos
-    float sin_theta, cos_theta;
-    pre_calc_sin_cos(hfoc->e_rad, &sin_theta, &cos_theta);
-
-    clarke_transform(hfoc->ia, hfoc->ib, &hfoc->i_alpha, &hfoc->i_beta);
-    park_transform(hfoc->i_alpha, hfoc->i_beta, sin_theta, cos_theta, &hfoc->id, &hfoc->iq);
-
-    // LPF id & iq
-    hfoc->id_filtered = second_order_lpf_update(&hfoc->id_lpf, hfoc->id);
-    hfoc->iq_filtered = second_order_lpf_update(&hfoc->iq_lpf, hfoc->iq);
-
-    // set dynamic max output vd and vq
-    hfoc->id_ctrl.out_max = hfoc->id_ctrl.out_max_dynamic * hfoc->v_bus;
-    hfoc->iq_ctrl.out_max = hfoc->iq_ctrl.out_max_dynamic * hfoc->v_bus;
-    
-    // Continue normal FOC
-    float id_error, iq_error;
-    id_error = id_ref - hfoc->id_filtered;
-    iq_error = iq_ref - hfoc->iq_filtered;
-    float vd_ref = pi_control(&hfoc->id_ctrl, id_error);
-    float vq_ref = pi_control(&hfoc->iq_ctrl, iq_error);
-
-    //HFI
-    float phase_increment = hfoc->omega_h * Ts;
-    hfoc->phase_h += phase_increment;
-    if (hfoc->phase_h >= TWO_PI) {
-        hfoc->phase_h -= TWO_PI;
-    }
-
-    if (hfoc->state == MOTOR_STATE_HFI) {
-        float v_inj = hfoc->v_h * fast_cos(hfoc->phase_h);
-        vd_ref += v_inj;
-    }
-
-    float two_sin_omega_t = 2.0f * fast_sin(hfoc->phase_h);
-    float i_alpha_l_raw = hfoc->i_alpha * two_sin_omega_t;
-    float i_beta_l_raw = hfoc->i_beta * two_sin_omega_t;
-    
-    hfoc->i_alpha_l = second_order_lpf_update(&hfoc->i_alpha_l_lpf, i_alpha_l_raw);
-    hfoc->i_beta_l = second_order_lpf_update(&hfoc->i_beta_lpf, i_beta_l_raw);
-
-
-    pll_update(&hfoc->pll, hfoc->i_alpha_l, hfoc->i_beta_l, Ts);
-
-    uint32_t da, db, dc;
-    inverse_park_transform(vd_ref, vq_ref, sin_theta, cos_theta, &hfoc->v_alpha, &hfoc->v_beta);
-    svpwm(hfoc->v_alpha, hfoc->v_beta, hfoc->v_bus, hfoc->pwm_res, &da, &db, &dc);
-
-    // pwm limit
-    *(hfoc->pwm_a) = CONSTRAIN(da, 0, hfoc->pwm_res);
-    *(hfoc->pwm_b) = CONSTRAIN(db, 0, hfoc->pwm_res);
-    *(hfoc->pwm_c) = CONSTRAIN(dc, 0, hfoc->pwm_res);
-    
-#if DEBUG_HFI
-    if (!hfoc->collect_sample_flag){
-        int n = hfoc->sample_index / 2;
-        i_alpha_buff[n] = hfoc->i_alpha;
-        i_beta_buff[n] = hfoc->i_beta;
-        i_alpha_l_buff[n] = hfoc->i_alpha_l;
-        i_beta_l_buff[n] = hfoc->i_beta_l;
-        hfoc->sample_index++;
-        if (hfoc->sample_index > MAX_SAMPLE_BUFF*2) {
-            hfoc->sample_index = 0;
-            hfoc->collect_sample_flag = 1;
-        }
-    }
-#endif
-}
-
-void foc_hfi_init(foc_t *hfoc, float v_h, float f_h, float lpf_fc, float Ts) {
-    hfoc->omega_h = TWO_PI * f_h;
-    hfoc->v_h = v_h;
-    float k_h = hfoc->v_h / (hfoc->omega_h * hfoc->Ld);
-    pll_init(&hfoc->pll, 1000.0f, 5000.0f, k_h, 50000.0f);
-    
-    float sampling_freq = 1.0f / Ts;
-    second_order_lpf_init(&hfoc->i_alpha_l_lpf, lpf_fc, sampling_freq);
-    second_order_lpf_init(&hfoc->i_beta_lpf, lpf_fc, sampling_freq);
-
-    second_order_lpf_init(&hfoc->id_lpf, 50.0f, sampling_freq);
-    second_order_lpf_init(&hfoc->iq_lpf, 300.0f, sampling_freq);
-    
-    const float alpha_lpf = TWO_PI * lpf_fc * Ts;
-    hfoc->alpha_filter_h = CONSTRAIN(alpha_lpf, 0.001f, 0.1f);
-}
-
 void foc_speed_control_update(foc_t *hfoc, float rpm_reference) {
 	if (hfoc == NULL || (hfoc->control_mode != SPEED_CONTROL_MODE && hfoc->control_mode != POSITION_CONTROL_MODE)) {
 		hfoc->speed_ctrl.integral = 0.0f;
@@ -253,7 +151,7 @@ void foc_position_control_update(foc_t *hfoc, float deg_reference) {
 		hfoc->pos_ctrl.last_error = 0.0f;
 		return;
 	}
-#if 0
+#if 1
     if (hfoc->loop_count >= 10) {
         hfoc->loop_count = 0;
         float error = deg_reference - hfoc->actual_angle;
@@ -316,10 +214,10 @@ void foc_calc_electric_angle(foc_t *hfoc, float m_rad) {
 
 float foc_calc_mech_rpm_encoder(foc_t *hfoc, float encd_rpm) {
     if (hfoc->sensor_dir == REVERSE_DIR) {
-        hfoc->actual_rpm = -encd_rpm * hfoc->gear_ratio;
+        hfoc->actual_rpm = -encd_rpm;
     }
     else {
-        hfoc->actual_rpm = encd_rpm * hfoc->gear_ratio;
+        hfoc->actual_rpm = encd_rpm;
     }
     return hfoc->actual_rpm;
 }
@@ -613,4 +511,125 @@ void estimate_inductance(foc_t *hfoc, float ts) {
     // hfoc->Rs = (Rs_d + Rs_q) * 0.5;
     hfoc->Ld = fabs(Ld_est);
     hfoc->Lq = fabs(Lq_est);
+}
+
+// Fungsi inisialisasi HFI system
+void foc_sensorless_init(foc_t *hfoc, float sampling_freq) {
+    second_order_lpf_init(&hfoc->id_lpf, HFI_ID_LPF_FC, sampling_freq);
+    second_order_lpf_init(&hfoc->iq_lpf, HFI_IQ_LPF_FC, sampling_freq);
+
+#if HFI_NEW
+    hfi_init(&hfoc->hfi, HFI_AMP, HFI_FREQ, sampling_freq);
+#else
+    hfi_lpf_init(&hfoc->hfi_lpf, hfoc->Ld, HFI_AMP, HFI_FREQ, HFI_I_ALPHA_BETA_LPF_FC, sampling_freq);
+#endif
+}
+
+void foc_sensorless_current_control_update(foc_t *hfoc, float Ts) {
+	if (hfoc == NULL || Ts <= 0.0f || hfoc->control_mode == AUDIO_MODE) {
+		hfoc->id_ctrl.integral = 0.0f;
+		hfoc->id_ctrl.last_error = 0.0f;
+		hfoc->iq_ctrl.integral = 0.0f;
+		hfoc->iq_ctrl.last_error = 0.0f;
+		return;
+	}
+
+	float id_ref = hfoc->id_ref;
+	float iq_ref = hfoc->iq_ref;
+
+    // Hard limit references
+    id_ref = CONSTRAIN(id_ref, -hfoc->max_current, hfoc->max_current);
+    iq_ref = CONSTRAIN(iq_ref, -hfoc->max_current, hfoc->max_current);
+
+    // pre calculate sin & cos
+    float sin_theta, cos_theta;
+    pre_calc_sin_cos(hfoc->e_rad, &sin_theta, &cos_theta);
+
+    clarke_transform(hfoc->ia, hfoc->ib, &hfoc->i_alpha, &hfoc->i_beta);
+    park_transform(hfoc->i_alpha, hfoc->i_beta, sin_theta, cos_theta, &hfoc->id, &hfoc->iq);
+
+    // LPF id & iq
+    hfoc->id_filtered = second_order_lpf_update(&hfoc->id_lpf, hfoc->id);
+    hfoc->iq_filtered = second_order_lpf_update(&hfoc->iq_lpf, hfoc->iq);
+
+    // set dynamic max output vd and vq
+    hfoc->id_ctrl.out_max = hfoc->id_ctrl.out_max_dynamic * hfoc->v_bus;
+    hfoc->iq_ctrl.out_max = hfoc->iq_ctrl.out_max_dynamic * hfoc->v_bus;
+    
+    // Continue normal FOC
+    float id_error, iq_error;
+    if (hfoc->state == MOTOR_STATE_HFI) {
+        id_error = id_ref - hfoc->id_filtered;
+        iq_error = iq_ref - hfoc->iq_filtered;
+    }
+    else {
+        id_error = id_ref - hfoc->id;
+        iq_error = iq_ref - hfoc->iq;
+    }
+    float vd_ref = pi_control(&hfoc->id_ctrl, id_error);
+    float vq_ref = pi_control(&hfoc->iq_ctrl, iq_error);
+
+    _Bool smo_ret = smo_update_arctan(&hfoc->smo, hfoc->v_alpha, hfoc->v_beta, hfoc->i_alpha, hfoc->i_beta);
+#if HFI_NEW
+    hfi_update_estimate_position(&hfoc->hfi, hfoc->iq, Ts);
+#else
+    hfi_lpf_update_estimate_position(&hfoc->hfi_lpf, hfoc->i_alpha, hfoc->i_beta, Ts);
+#endif
+    switch (hfoc->state) {
+        case MOTOR_STATE_HFI: {
+#if HFI_NEW
+            float v_inj = hfi_get_v_inj(&hfoc->hfi);
+            hfoc->e_rad = hfi_get_estimate_position(&hfoc->hfi);
+            float omega = hfi_get_estimate_omega(&hfoc->hfi);
+#else
+            float v_inj = hfi_lpf_get_v_inj(&hfoc->hfi_lpf);
+            hfoc->e_rad = hfi_lpf_get_estimate_position(&hfoc->hfi_lpf);
+            float omega = hfi_lpf_get_estimate_omega(&hfoc->hfi_lpf);
+#endif
+            vd_ref += v_inj;
+            hfoc->actual_rpm = (omega * 60.0 / TWO_PI) / hfoc->pole_pairs;
+            if (fabsf(hfoc->actual_rpm) > HFI_TO_SMO_THRESHOLD) {
+                hfoc->state = MOTOR_STATE_SMO;
+            }
+            break;
+        }
+        case MOTOR_STATE_SMO: {
+            if (!smo_ret) {
+                hfoc->state = MOTOR_STATE_HFI;
+                break;
+            }
+            hfoc->e_rad = smo_get_rotor_angle(&hfoc->smo);
+            hfoc->actual_rpm = smo_get_rotor_speed(&hfoc->smo);
+#if HFI_NEW
+            hfi_force_estimate_position(&hfoc->hfi, hfoc->e_rad);
+#else
+            hfi_lpf_force_estimate_position(&hfoc->hfi_lpf, hfoc->e_rad);
+#endif
+            break;
+        }
+    }
+
+    uint32_t da, db, dc;
+    inverse_park_transform(vd_ref, vq_ref, sin_theta, cos_theta, &hfoc->v_alpha, &hfoc->v_beta);
+    svpwm(hfoc->v_alpha, hfoc->v_beta, hfoc->v_bus, hfoc->pwm_res, &da, &db, &dc);
+
+    // pwm limit
+    *(hfoc->pwm_a) = CONSTRAIN(da, 0, hfoc->pwm_res);
+    *(hfoc->pwm_b) = CONSTRAIN(db, 0, hfoc->pwm_res);
+    *(hfoc->pwm_c) = CONSTRAIN(dc, 0, hfoc->pwm_res);
+    
+#if DEBUG_HFI
+    if (!hfoc->collect_sample_flag){
+        int n = hfoc->sample_index / 2;
+        i_alpha_buff[n] = hfoc->debug_var[0];
+        i_beta_buff[n] = hfoc->debug_var[1];
+        i_alpha_l_buff[n] = hfoc->debug_var[2];
+        i_beta_l_buff[n] = hfoc->debug_var[3];
+        hfoc->sample_index++;
+        if (hfoc->sample_index > MAX_SAMPLE_BUFF*2) {
+            hfoc->sample_index = 0;
+            hfoc->collect_sample_flag = 1;
+        }
+    }
+#endif
 }

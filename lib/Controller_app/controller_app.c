@@ -16,6 +16,7 @@ extern int note_piano[];
 extern int start_cal;
 extern _Bool calibration_flag;
 extern _Bool test_bw_flag;
+extern _Bool pos_demo_flag;
 
 
 char usb_send_buff[128];
@@ -235,10 +236,16 @@ void parse_command(char *cmd) {
     hfoc.control_mode = CALIBRATION_MODE;
     calibration_flag = 1;
   }
-	else if (strstr(cmd, "test")) {
-    usb_print("start test pulse response\r\n");
-    hfoc.control_mode = TEST_MODE;
-    test_bw_flag = 1;
+	else if (strstr(cmd, "run")) {
+    // usb_print("start test pulse response\r\n");
+    // hfoc.control_mode = TEST_MODE;
+    // test_bw_flag = 1;
+    usb_print("start demo\r\n");
+    pos_demo_flag = 1;
+  }
+	else if (strstr(cmd, "stop")) {
+    usb_print("stop demo\r\n");
+    pos_demo_flag = 0;
   }
 	else if (strstr(cmd, "get_bandwidth")) {
     usb_print("Current Bandwidth:%.2f\r\n", hfoc.I_ctrl_bandwidth);

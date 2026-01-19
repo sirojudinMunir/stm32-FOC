@@ -10,6 +10,7 @@
 
 
 #include <stdint.h>
+#include <complex.h>
 
 #define LUT_SIZE (1024*4)
 #define LUT_STEP (TWO_PI / (float)LUT_SIZE)
@@ -28,6 +29,11 @@
 
 #define DEG_TO_RAD(deg) ((deg) * 0.017453292519943f)  // π/180
 
+typedef struct {
+    float real;
+    float imag;
+} complex_t;
+
 extern float sin_lut[LUT_SIZE];
 extern float cos_lut[LUT_SIZE];
 
@@ -35,6 +41,10 @@ void init_trig_lut(void);
 void norm_angle_rad(float *theta);
 float fast_sin(float theta);
 float fast_cos(float theta);
+float fast_atan2(float y, float x);
+complex_t complex_multiply(complex_t a, complex_t b);
+complex_t complex_add(complex_t a, complex_t b);
+complex_t complex_subtract(complex_t a, complex_t b);
 void pre_calc_sin_cos(float theta, float *sin_theta, float *cos_theta);
 
 void clarke_transform(float ia, float ib, float *i_alpha, float *i_beta);

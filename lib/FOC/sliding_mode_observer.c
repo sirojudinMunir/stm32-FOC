@@ -81,7 +81,7 @@ int smo_update_arctan(smo_t *hsmo, float v_alpha, float v_beta,
     
     // estimate angle position and speed
     if (hsmo->emf_magnitude > hsmo->min_operating_emf) {
-        hsmo->e_theta = atan2f(hsmo->e_beta_est, hsmo->e_alpha_est);
+        hsmo->e_theta = fast_atan2(hsmo->e_beta_est, hsmo->e_alpha_est);
 
         if (hsmo->omega_est > 0) {
             hsmo->theta_est = hsmo->e_theta - 0.5f*PI;

@@ -33,7 +33,6 @@
 #include "CAN.h"
 #include <stdio.h>
 #include <math.h>
-#include "sliding_mode_observer.h"
 
 /* USER CODE END Includes */
 
@@ -52,7 +51,7 @@
 
 // #define BLDC_PWM_FREQ AUDIO_SAMPLE_RATE
 #define BLDC_PWM_FREQ 10000
-#define R_SHUNT	0.001f
+#define R_SHUNT	0.01f
 #define V_OFFSET_A	1.645f
 #define V_OFFSET_B	1.657f
 #define POLE_PAIR	(7)
@@ -93,6 +92,7 @@ float sp_input = 0.0f;
 int start_cal = 0;
 _Bool com_init_flag = 0;
 _Bool calibration_flag = 0;
+_Bool pos_demo_flag = 0;
 
 
 float raw_encd_data;
@@ -131,7 +131,7 @@ void bldc_init(void) {
   DRV8302_GPIO_FAULT_config(&bldc, FAULT_GPIO_Port, FAULT_Pin);
   DRV8302_GPIO_ENGATE_config(&bldc, EN_GATE_GPIO_Port, EN_GATE_Pin);
   DRV8302_TIMER_config(&bldc, &htim1, BLDC_PWM_FREQ);
-  DRV8302_current_sens_config(&bldc, _40VPV, R_SHUNT, V_OFFSET_A, V_OFFSET_B);
+  DRV8302_current_sens_config(&bldc, _10VPV, R_SHUNT, V_OFFSET_A, V_OFFSET_B);
   DRV8302_set_mode(&bldc, _6_PWM_MODE, _CYCLE_MODE);
 
   DRV8302_init(&bldc);
@@ -152,7 +152,7 @@ void control_init(void) {
 
   pid_init(&hfoc.speed_ctrl, m_config.speed_kp, m_config.speed_ki, 0.0001f, FOC_TS * SPEED_CONTROL_CYCLE, m_config.speed_out_max, m_config.speed_e_deadband);
   hfoc.speed_ctrl.d_alpha_filter = 0.01f;
-  pid_init(&hfoc.pos_ctrl, m_config.pos_kp, m_config.pos_ki, m_config.pos_kd, FOC_TS * SPEED_CONTROL_CYCLE, m_config.pos_out_max, m_config.pos_e_deadband);
+  pid_init(&hfoc.pos_ctrl, m_config.pos_kp, m_config.pos_ki, m_config.pos_kd, FOC_TS * SPEED_CONTROL_CYCLE * 10, m_config.pos_out_max, m_config.pos_e_deadband);
   hfoc.pos_ctrl.d_alpha_filter = 0.85;
   
   foc_pwm_init(&hfoc, &(TIM1->CCR3), &(TIM1->CCR2), &(TIM1->CCR1), bldc.pwm_resolution);
@@ -166,13 +166,10 @@ void control_init(void) {
   hfoc.Lq = m_config.Lq;
   float Rs = m_config.Rs;
   float Ls = (hfoc.Ld + hfoc.Lq) / 2.0f;
-  smo_init(&hsmo, Rs, Ls, POLE_PAIR, FOC_TS);
+  smo_init(&hfoc.smo, Rs, Ls, POLE_PAIR, FOC_TS);
 
   // HFI parameter
-  const float vh = 1.2f; // injection amplitude
-  const float fh = 1000.0f; // injection frequency
-  const float lpf_fc = 200.0f; // cut-off frequency LPF
-  foc_hfi_init(&hfoc, vh, fh, lpf_fc, FOC_TS);
+  foc_sensorless_init(&hfoc, BLDC_PWM_FREQ);
 }
 
 void magnetic_encoder_init(void) {
@@ -500,7 +497,11 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+#if (HSE_VALUE == 16000000U)
   RCC_OscInitStruct.PLL.PLLM = 8;
+#else
+  RCC_OscInitStruct.PLL.PLLM = 6;
+#endif
   RCC_OscInitStruct.PLL.PLLN = 168;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 7;
@@ -1041,35 +1042,8 @@ static int torque_control_update(void) {
   DRV8302_get_current(&bldc, &hfoc.ia, &hfoc.ib);
 
 #ifdef SENSORLESS_MODE
-  static float rpm_temp = 0.0f;
-  switch (hfoc.state) {
-    case MOTOR_STATE_HFI: {
-      smo_update_arctan(&hsmo, hfoc.v_alpha, hfoc.v_beta, hfoc.i_alpha, hfoc.i_beta);
+  foc_sensorless_current_control_update(&hfoc, FOC_TS);
 
-      hfoc.e_rad = hfoc.pll.theta_est;
-      rpm_temp += (hfoc.pll.omega_est * 60.0 / TWO_PI) / POLE_PAIR;
-      foc_current_control_update_hfi(&hfoc, FOC_TS);
-      if (fabsf(hfoc.actual_rpm) > 300) {
-        // smo_reset(&hsmo);
-        hfoc.state = MOTOR_STATE_SMO;
-      }
-      break;
-    }
-    case MOTOR_STATE_SMO: {
-      _Bool smo_ret = smo_update_arctan(&hsmo, hfoc.v_alpha, hfoc.v_beta, hfoc.i_alpha, hfoc.i_beta);
-      // float abs_rpm = fabs(smo_get_rotor_speed(&hsmo));
-      if (smo_ret == 0) {
-        hfoc.state = MOTOR_STATE_HFI;
-        break;
-      }
-      hfoc.e_rad = smo_get_rotor_angle(&hsmo);
-      hfoc.pll.theta_est = hfoc.e_rad;
-      rpm_temp += smo_get_rotor_speed(&hsmo);
-      foc_current_control_update_hfi(&hfoc, FOC_TS);
-      break;
-    }
-  }
-  
   // calc mechanical angle
   static float last_e_rad = 0.0f;
   static float rad_ovf = 0.0f;
@@ -1087,8 +1061,8 @@ static int torque_control_update(void) {
   hfoc.actual_angle = mechanical_angle_deg;
 
   if (event_speed_loop_count >= SPEED_CONTROL_CYCLE) {
-    hfoc.actual_rpm = (rpm_temp / (float)SPEED_CONTROL_CYCLE);
-    rpm_temp = 0;
+    // hfoc.actual_rpm = (rpm_temp / (float)SPEED_CONTROL_CYCLE);
+    // rpm_temp = 0;
     event_speed_loop_count = 0;
     foc_set_flag();
     ret = 1;
@@ -1163,7 +1137,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc) {
       case POSITION_CONTROL_MODE: {
         if (torque_control_update() == 1) {
 #ifndef SENSORLESS_MODE
-          float deg_encd = AS5047P_get_actual_degree(&hencd) * hfoc.gear_ratio;
+          float deg_encd = AS5047P_get_actual_degree(&hencd);
           foc_calc_mech_pos_encoder(&hfoc, deg_encd);
 #endif
           foc_position_control_update(&hfoc, sp_input);
@@ -1206,6 +1180,18 @@ void StartControlTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
   uint32_t blink_tick = 0;
+  float pos_demo[] = {
+    -10.0f, 0.0f,
+
+    // -180.0f, 0.0f,
+    // -180.0f, 0.0f,
+    // -180.0f, 0.0f,
+
+    // -45.0f, -90.0f, -135.0f, -180.0f,
+    // -135.0f, -90.0f, - 45.0f, 0.0f
+  };
+  int num_elements = sizeof(pos_demo) / sizeof(pos_demo[0]);
+  uint32_t test_cycle = 0;
   /* Infinite loop */
   for(;;)
   { 
@@ -1234,6 +1220,24 @@ void StartControlTask(void const * argument)
       if (test_bw_flag) {
         test_bandwidth();
         test_bw_flag = 0;
+      }
+    }
+    // actuator demo:
+    if (pos_demo_flag && hfoc.control_mode == POSITION_CONTROL_MODE) {
+      static int pos_index = 0;
+
+      sp_input = pos_demo[pos_index];
+      float error_angle = hfoc.actual_angle - pos_demo[pos_index]; 
+      if (fabs(error_angle) < 0.5f) {
+        pos_index++;
+        if (pos_index >= num_elements) {
+          pos_index = 0;
+          test_cycle++;
+          if (test_cycle > 30) {
+            test_cycle = 0;
+            // pos_demo_flag = 0;
+          }
+        }
       }
     }
 
@@ -1299,6 +1303,8 @@ void StartComTask(void const * argument)
         data[len++] = sp_input;
         data[len++] = hfoc.id_filtered;
         data[len++] = hfoc.iq_filtered;
+        data[len++] = hfoc.e_rad;
+        data[len++] = hfoc.e_angle_rad_comp;
         break;
       case SPEED_CONTROL_MODE:
         data[len++] = sp_input;

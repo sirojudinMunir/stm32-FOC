@@ -15,6 +15,7 @@ typedef struct {
 } pll_t;
 
 void pll_init(pll_t* pll, float kp, float ki, float k_h, float omega_max);
-float pll_update(pll_t* pll, float i_alpha_t, float i_beta_t, float Ts);
+float pll_update(pll_t* pll, float error, float Ts);
+void pll_reset(pll_t *pll);
 
 #endif
