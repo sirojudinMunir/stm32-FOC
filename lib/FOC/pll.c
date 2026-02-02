@@ -30,7 +30,7 @@ float pll_update(pll_t* pll, float error, float Ts) {
     if (omega_e < -pll->omega_max) omega_e = -pll->omega_max;
 
     // omega filter
-    const float alpha = 0.05f;
+    const float alpha = 0.03f;
     pll->omega_est = (1.0f - alpha) * pll->omega_est + alpha * omega_e;
 
     // Integrator for position

@@ -43,10 +43,10 @@ extern float Id_buff[MAX_I_SAMPLE];
 extern float Iq_buff[MAX_I_SAMPLE];
 
 #if DEBUG_HFI
-extern float i_alpha_buff[MAX_SAMPLE_BUFF];
-extern float i_beta_buff[MAX_SAMPLE_BUFF];
-extern float i_alpha_l_buff[MAX_SAMPLE_BUFF];
-extern float i_beta_l_buff[MAX_SAMPLE_BUFF];
+extern float param1_debug_buff[MAX_SAMPLE_BUFF];
+extern float param2_debug_buff[MAX_SAMPLE_BUFF];
+extern float param3_debug_buff[MAX_SAMPLE_BUFF];
+extern float param4_debug_buff[MAX_SAMPLE_BUFF];
 #endif
 
 typedef enum {
@@ -69,9 +69,21 @@ typedef enum {
 
 // state machine for HFI
 typedef enum {
+	// MOTOR_STATE_POSITION_DETECTION,
+	// MOTOR_STATE_POLARITY_DETECTION,
 	MOTOR_STATE_HFI,
 	MOTOR_STATE_SMO
 }motor_state_t;
+
+// state machine for polarity detection
+typedef enum {
+	P_DET_START,
+	P_DET_POSITIVE,
+	P_DET_WAITING_POSITIVE,
+	P_DET_NEGATIVE,
+	P_DET_WAITING_NEGATIVE,
+	P_DET_STOP
+}p_det_state_t;
 
 typedef enum {
 	STARTUP_IDLE, STARTUP_ALIGN, STARTUP_OPEN_LOOP_RAMP
@@ -97,7 +109,7 @@ typedef struct {
 	float e_angle_rad_comp; // electrical angle
 	float m_angle_offset;
 	float e_rad;
-	float e_angle_rad_smo;
+	float last_e_rad;
 
 	float vd, vq;
 	float id, iq;
@@ -112,6 +124,7 @@ typedef struct {
 	float rpm_temp;
 	float actual_rpm;
 	float actual_angle;
+	int32_t m_angle_overflow_count;
 
 	float I_ctrl_bandwidth;
 	float id_ref, iq_ref;
@@ -147,19 +160,16 @@ typedef struct {
 	hfi_lpf_t hfi_lpf;
 #endif
 
-	// test HFI
-	float phase_h;
-	float v_h; // amplitudo
-	float f_h; // frequency 
-	float omega_h;
-	float alpha_filter_h;
-	float i_alpha_l; // low-frequency / fundamental
-	float i_beta_l; // low-frequency / fundamental
-	pll_t pll;
-	SecondOrderLPF i_alpha_l_lpf;
-	SecondOrderLPF i_beta_lpf;
 	SecondOrderLPF id_lpf;
 	SecondOrderLPF iq_lpf;
+
+	//polarity detection
+	p_det_state_t pd_state;
+	float pd_v_pulse;
+	float pd_i_p;
+	float pd_i_n;
+	uint16_t pd_time;
+	uint16_t pd_count;
 
 	//debug
 	int sample_index;
@@ -188,6 +198,8 @@ void estimate_inductance(foc_t *hfoc, float ts);
 int foc_startup_rotor(foc_t *hfoc, smo_t *hsmo, _Bool dir, float dt);
 
 void foc_sensorless_init(foc_t *hfoc, float sampling_freq);
+void foc_sensorless_polarity_detection(foc_t *hfoc);
 void foc_sensorless_current_control_update(foc_t *hfoc, float Ts);
+float foc_sensorless_get_mech_degree(foc_t *hfoc);
 
 #endif /* FOC_INC_FOC_UTILS_H_ */

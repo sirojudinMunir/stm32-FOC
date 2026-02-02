@@ -10,6 +10,7 @@
 #include "controller_app.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 
 // extern from main.c
 extern motor_config_t m_config;
@@ -22,10 +23,10 @@ float Id_buff[MAX_I_SAMPLE];
 float Iq_buff[MAX_I_SAMPLE];
 
 #if DEBUG_HFI
-float i_alpha_buff[MAX_SAMPLE_BUFF];
-float i_beta_buff[MAX_SAMPLE_BUFF];
-float i_alpha_l_buff[MAX_SAMPLE_BUFF];
-float i_beta_l_buff[MAX_SAMPLE_BUFF];
+float param1_debug_buff[MAX_SAMPLE_BUFF];
+float param2_debug_buff[MAX_SAMPLE_BUFF];
+float param3_debug_buff[MAX_SAMPLE_BUFF];
+float param4_debug_buff[MAX_SAMPLE_BUFF];
 #endif
 
 float error_temp[ERROR_LUT_SIZE] = {0};
@@ -146,27 +147,53 @@ void foc_speed_control_update(foc_t *hfoc, float rpm_reference) {
 }
 
 void foc_position_control_update(foc_t *hfoc, float deg_reference) {
-	if (hfoc == NULL || hfoc->control_mode != POSITION_CONTROL_MODE) {
-		hfoc->pos_ctrl.integral = 0.0f;
-		hfoc->pos_ctrl.last_error = 0.0f;
-		return;
-	}
+    if (hfoc == NULL || hfoc->control_mode != POSITION_CONTROL_MODE) {
+        hfoc->pos_ctrl.integral = 0.0f;
+        hfoc->pos_ctrl.last_error = 0.0f;
+        return;
+    }
+    
+    // Normalize reference angle to 0-360 degrees
+    deg_reference = fmodf(deg_reference, 360.0f);
+    if (deg_reference < 0) {
+        deg_reference += 360.0f;
+    }
+    
 #if 1
     if (hfoc->loop_count >= 10) {
         hfoc->loop_count = 0;
+        
+        // Calculate shortest path error with wrap-around
         float error = deg_reference - hfoc->actual_angle;
+        
+        // Handle wrap-around for shortest path
+        if (error > 180.0f) {
+            error -= 360.0f;
+        } else if (error < -180.0f) {
+            error += 360.0f;
+        }
+        
         hfoc->rpm_ref = pid_control(&hfoc->pos_ctrl, error);
-        // const float min_speed = 50.0f;
-        // if (fabs(hfoc->rpm_ref) <= 0.5f) hfoc->rpm_ref = 0.0f;
-        // else if (hfoc->rpm_ref < min_speed) hfoc->rpm_ref = min_speed;
-        // else if (hfoc->rpm_ref > -min_speed) hfoc->rpm_ref = -min_speed;
     }
     hfoc->loop_count++;
 
     foc_speed_control_update(hfoc, hfoc->rpm_ref);
 #else
     hfoc->id_ref = 0.0f;
-    hfoc->iq_ref = pid_control(&hfoc->pos_ctrl, deg_reference - hfoc->actual_angle);
+    
+    // Normalize reference for direct control
+    float target_angle = deg_reference;
+    float current_angle = hfoc->actual_angle;
+    
+    // Calculate shortest path error
+    float error = target_angle - current_angle;
+    if (error > 180.0f) {
+        error -= 360.0f;
+    } else if (error < -180.0f) {
+        error += 360.0f;
+    }
+    
+    hfoc->iq_ref = pid_control(&hfoc->pos_ctrl, error);
 #endif
 }
 
@@ -523,6 +550,61 @@ void foc_sensorless_init(foc_t *hfoc, float sampling_freq) {
 #else
     hfi_lpf_init(&hfoc->hfi_lpf, hfoc->Ld, HFI_AMP, HFI_FREQ, HFI_I_ALPHA_BETA_LPF_FC, sampling_freq);
 #endif
+
+    hfoc->pd_time = 20;
+    hfoc->pd_v_pulse = 0.0f;
+}
+
+void foc_sensorless_polarity_detection(foc_t *hfoc) {
+    if (hfoc->pd_state == P_DET_STOP) return;
+
+    if (hfoc->pd_state > P_DET_START) {
+        if (hfoc->pd_i_p < hfoc->id) {
+            hfoc->pd_i_p = hfoc->id;
+        }
+        if (hfoc->pd_i_n > hfoc->id) {
+            hfoc->pd_i_n = hfoc->id;
+        }
+    }
+
+    hfoc->pd_count++;
+    if (hfoc->pd_count >= hfoc->pd_time && hfoc->pd_state < 5) {
+        hfoc->pd_count = 0;
+        switch(hfoc->pd_state){
+            case P_DET_START:
+                hfoc->pd_v_pulse = 0.0f;
+                hfoc->pd_time = PD_WAITING_TIME;
+                hfoc->pd_state = P_DET_POSITIVE;
+                break;
+            case P_DET_POSITIVE:
+                hfoc->pd_v_pulse = PD_V_PULSE;
+                hfoc->pd_time = PD_PULSE_TIME;
+                hfoc->pd_state = P_DET_WAITING_POSITIVE;
+                break;
+            case P_DET_WAITING_POSITIVE:
+                hfoc->pd_v_pulse = 0.0f;
+                hfoc->pd_time = PD_WAITING_TIME;
+                hfoc->pd_state = P_DET_NEGATIVE;
+                break;
+            case P_DET_NEGATIVE:
+                hfoc->pd_v_pulse = -PD_V_PULSE;
+                hfoc->pd_time = PD_PULSE_TIME;
+                hfoc->pd_state = P_DET_WAITING_NEGATIVE;
+                break;
+            case P_DET_WAITING_NEGATIVE:
+                hfoc->pd_v_pulse = 0.0f;
+                hfoc->pd_time = PD_PULSE_TIME;
+                if (hfoc->pd_i_p < fabsf(hfoc->pd_i_n)) {
+                    hfi_force_estimate_position(&hfoc->hfi, hfoc->e_rad + PI);
+                }
+                hfoc->pd_i_p = 0.0f;
+                hfoc->pd_i_n = 0.0f;
+                hfoc->pd_state = P_DET_STOP;
+                break;
+            default:
+            break;
+        }
+    }
 }
 
 void foc_sensorless_current_control_update(foc_t *hfoc, float Ts) {
@@ -569,6 +651,8 @@ void foc_sensorless_current_control_update(foc_t *hfoc, float Ts) {
     float vd_ref = pi_control(&hfoc->id_ctrl, id_error);
     float vq_ref = pi_control(&hfoc->iq_ctrl, iq_error);
 
+    foc_sensorless_polarity_detection(hfoc);
+
     _Bool smo_ret = smo_update_arctan(&hfoc->smo, hfoc->v_alpha, hfoc->v_beta, hfoc->i_alpha, hfoc->i_beta);
 #if HFI_NEW
     hfi_update_estimate_position(&hfoc->hfi, hfoc->iq, Ts);
@@ -586,10 +670,15 @@ void foc_sensorless_current_control_update(foc_t *hfoc, float Ts) {
             hfoc->e_rad = hfi_lpf_get_estimate_position(&hfoc->hfi_lpf);
             float omega = hfi_lpf_get_estimate_omega(&hfoc->hfi_lpf);
 #endif
-            vd_ref += v_inj;
-            hfoc->actual_rpm = (omega * 60.0 / TWO_PI) / hfoc->pole_pairs;
-            if (fabsf(hfoc->actual_rpm) > HFI_TO_SMO_THRESHOLD) {
-                hfoc->state = MOTOR_STATE_SMO;
+            if (hfoc->pd_state > P_DET_START && hfoc->pd_state < P_DET_STOP)
+                vd_ref += hfoc->pd_v_pulse;
+            else {
+                vd_ref += v_inj;
+
+                hfoc->actual_rpm = (omega * 60.0 / TWO_PI) / hfoc->pole_pairs;
+                if (fabsf(hfoc->actual_rpm) > HFI_TO_SMO_THRESHOLD) {
+                    hfoc->state = MOTOR_STATE_SMO;
+                }
             }
             break;
         }
@@ -607,6 +696,8 @@ void foc_sensorless_current_control_update(foc_t *hfoc, float Ts) {
 #endif
             break;
         }
+        default:
+        break;
     }
 
     uint32_t da, db, dc;
@@ -620,16 +711,46 @@ void foc_sensorless_current_control_update(foc_t *hfoc, float Ts) {
     
 #if DEBUG_HFI
     if (!hfoc->collect_sample_flag){
-        int n = hfoc->sample_index / 2;
-        i_alpha_buff[n] = hfoc->debug_var[0];
-        i_beta_buff[n] = hfoc->debug_var[1];
-        i_alpha_l_buff[n] = hfoc->debug_var[2];
-        i_beta_l_buff[n] = hfoc->debug_var[3];
+        int n = hfoc->sample_index;
+        param1_debug_buff[n] = vd_ref;
+        param2_debug_buff[n] = hfoc->id;
+        // param3_debug_buff[n] = hfoc->hfi.theta_error;
+        // param4_debug_buff[n] = hfoc->pd_v_pulse;
         hfoc->sample_index++;
-        if (hfoc->sample_index > MAX_SAMPLE_BUFF*2) {
+        if (hfoc->sample_index > MAX_SAMPLE_BUFF) {
             hfoc->sample_index = 0;
             hfoc->collect_sample_flag = 1;
         }
     }
 #endif
+}
+
+float foc_sensorless_get_mech_degree(foc_t *hfoc) {
+    float angle_diff = hfoc->e_rad - hfoc->last_e_rad;
+    hfoc->last_e_rad = hfoc->e_rad;
+
+    if (angle_diff < -PI) {
+        hfoc->m_angle_overflow_count++;
+    } else if (angle_diff > PI) {
+        hfoc->m_angle_overflow_count--;
+    }
+
+    float total_e_angle = hfoc->e_rad + (float)hfoc->m_angle_overflow_count * TWO_PI;
+
+    if (abs(hfoc->m_angle_overflow_count) > 1000000) {
+        hfoc->m_angle_overflow_count = 0;
+        hfoc->last_e_rad = hfoc->e_rad;
+    }
+
+    float mechanical_angle_deg = RAD_TO_DEG(total_e_angle) / hfoc->pole_pairs;
+
+    // Normalize to 0-360 degrees
+    mechanical_angle_deg = fmodf(mechanical_angle_deg, 360.0f);
+    if (mechanical_angle_deg < 0) {
+    mechanical_angle_deg += 360.0f;
+    }
+
+    hfoc->actual_angle = mechanical_angle_deg;
+
+    return hfoc->actual_angle;
 }

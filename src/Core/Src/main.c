@@ -449,7 +449,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of controlTask */
-  osThreadDef(controlTask, StartControlTask, osPriorityHigh, 0, 512);
+  osThreadDef(controlTask, StartControlTask, osPriorityNormal, 0, 512);
   controlTaskHandle = osThreadCreate(osThread(controlTask), NULL);
 
   /* definition and creation of comTask */
@@ -1039,30 +1039,17 @@ static void MX_GPIO_Init(void)
 static int torque_control_update(void) {
   int ret = 0;
   static uint8_t event_speed_loop_count = 0;
+  static float rpm_temp = 0.0f;
   DRV8302_get_current(&bldc, &hfoc.ia, &hfoc.ib);
 
 #ifdef SENSORLESS_MODE
   foc_sensorless_current_control_update(&hfoc, FOC_TS);
-
-  // calc mechanical angle
-  static float last_e_rad = 0.0f;
-  static float rad_ovf = 0.0f;
-  float angle_diff = hfoc.e_rad - last_e_rad;
-  last_e_rad = hfoc.e_rad;
-
-  if (angle_diff < -PI) {
-    rad_ovf += 1.0f;
-  }
-  else if (angle_diff > PI) {
-    rad_ovf -= 1.0f;
-  }
-  float total_e_angle = hfoc.e_rad + rad_ovf * TWO_PI;
-  float mechanical_angle_deg = RAD_TO_DEG(total_e_angle) / POLE_PAIR;
-  hfoc.actual_angle = mechanical_angle_deg;
+  foc_sensorless_get_mech_degree(&hfoc);
+  rpm_temp += hfoc.actual_rpm;
 
   if (event_speed_loop_count >= SPEED_CONTROL_CYCLE) {
-    // hfoc.actual_rpm = (rpm_temp / (float)SPEED_CONTROL_CYCLE);
-    // rpm_temp = 0;
+    hfoc.actual_rpm = (rpm_temp / (float)SPEED_CONTROL_CYCLE);
+    rpm_temp = 0.0f;
     event_speed_loop_count = 0;
     foc_set_flag();
     ret = 1;
@@ -1130,7 +1117,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc) {
           else if (sp_input < sp_rpm) {
             sp_rpm -= acc_rpm;
           }
-          foc_speed_control_update(&hfoc, sp_rpm);
+          foc_speed_control_update(&hfoc, sp_input);
         }
         break;
       }
@@ -1278,12 +1265,17 @@ void StartComTask(void const * argument)
       if (sample_index == 0) {
         erase_graph(); 
         osDelay(1);
+        memset(data, 0.0f, sizeof(data));
+        send_data_float(data, 2); osDelay(1);
+        change_title("DEBUG HFI"); osDelay(1);
+        change_legend(0, "Vd"); osDelay(1);
+        change_legend(1, "Id"); osDelay(1);
       }
 
-      data[len++] = i_alpha_buff[sample_index];
-      data[len++] = i_beta_buff[sample_index];
-      data[len++] = i_alpha_l_buff[sample_index];
-      data[len++] = i_beta_l_buff[sample_index];
+      data[len++] = param1_debug_buff[sample_index];
+      data[len++] = param2_debug_buff[sample_index];
+      // data[len++] = param3_debug_buff[sample_index];
+      // data[len++] = param4_debug_buff[sample_index];
       send_data_float(data, len);
       sample_index++;
       if (sample_index > MAX_SAMPLE_BUFF) {
@@ -1303,8 +1295,7 @@ void StartComTask(void const * argument)
         data[len++] = sp_input;
         data[len++] = hfoc.id_filtered;
         data[len++] = hfoc.iq_filtered;
-        data[len++] = hfoc.e_rad;
-        data[len++] = hfoc.e_angle_rad_comp;
+        // data[len++] = smo_get_rotor_angle(&hfoc.smo);
         break;
       case SPEED_CONTROL_MODE:
         data[len++] = sp_input;

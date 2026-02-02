@@ -38,6 +38,9 @@ Built using **PlatformIO**, **STM32 HAL/LL drivers**, and **FreeRTOS**, this pro
 
 ## UPDATE LOG
 
+03-02-2026
+- Add Initial position detection with polarity judgement
+
 20-01-2026
 - Update HFI using single-bin Sliding DFT
 

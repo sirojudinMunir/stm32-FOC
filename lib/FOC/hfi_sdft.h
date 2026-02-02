@@ -7,12 +7,17 @@
 
 typedef struct {
 	float phase_h;
+	float last_phase_h;
 	float v_h; // amplitudo
 	float f_h; // frequency 
 	float omega_h;
 	int sdft_window_size;
 	int sdft_buff_idx;
 	float sdft_iq_buffer[128];
+	float sdft_amplitude;
+	float sdft_phase;
+	float sdft_fundamental;
+	float theta_error;
 	float Xk_real;
 	float Xk_imag;
 	complex_t last_Xk;
