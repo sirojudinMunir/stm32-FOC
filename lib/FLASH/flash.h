@@ -63,4 +63,7 @@ void flash_read_config(motor_config_t *data);
 void flash_default_config(motor_config_t *data);
 void flash_auto_tuning_torque_control(motor_config_t *data);
 
+void copy_to_local(motor_config_t *data, foc_t *hfoc);
+void copy_from_local(motor_config_t *data, foc_t *hfoc);
+
 #endif

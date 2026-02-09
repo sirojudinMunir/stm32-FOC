@@ -13,13 +13,11 @@ extern foc_t hfoc;
 
 extern int note_piano[];
 
-extern int start_cal;
 extern _Bool calibration_flag;
-extern _Bool test_bw_flag;
-extern _Bool pos_demo_flag;
 
 
 char usb_send_buff[128];
+plot_point_t source_plot[MAX_DATA_PLOT];
 
 void send_data_float(const float* values, uint8_t count) {
   if (count == 0 || values == NULL) return;
@@ -91,67 +89,6 @@ void erase_graph(void) {
   CDC_Transmit_FS(frame, 2);
 }
 
-/******************************************************************************************* */
-
-
-int parse_float_value(const char *input, char separator, float *out_value) {
-    if (!input || !out_value) return 0;
-
-    // Cari posisi separator
-    const char *sep_pos = strchr(input, separator);
-    if (!sep_pos) return 0;
-
-    // Lompat ke karakter setelah separator
-    const char *val_str = sep_pos + 1;
-
-    // Lewati whitespace
-    while (isspace((unsigned char)*val_str)) {
-        val_str++;
-    }
-
-    // Cek apakah setelah spasi masih ada karakter valid
-    if (*val_str == '\0') return 0;
-
-    // Parsing float
-    char *endptr;
-    float value = strtof(val_str, &endptr);
-
-    if (val_str == endptr) {
-        // Tidak ada konversi yang terjadi
-        return 0;
-    }
-
-    *out_value = value;
-    return 1;
-}
-
-int parse_int_value(const char *input, char separator, int *out_value) {
-    if (!input || !out_value) return 0;
-
-    const char *sep_pos = strchr(input, separator);
-    if (!sep_pos) return 0;
-
-    const char *val_str = sep_pos + 1;
-
-    while (isspace((unsigned char)*val_str)) {
-        val_str++;
-    }
-
-    if (*val_str == '\0') return 0;
-
-    char *endptr;
-    long value = strtol(val_str, &endptr, 10);
-
-    // Validasi: endptr harus berada di akhir angka atau hanya whitespace
-    while (isspace((unsigned char)*endptr)) {
-        endptr++;
-    }
-    if (*endptr != '\0') return 0; // Ada karakter tidak valid setelah angka
-
-    *out_value = (int)value;
-    return 1;
-}
-
 void parse_piano(uint8_t *buf) {
 	int tone = buf[1] - 1;
 	if (tone < 0) tone = 0;
@@ -160,254 +97,503 @@ void parse_piano(uint8_t *buf) {
 	else if (buf[0] == 0xD2) note_piano[tone] = 0;
 }
 
-void get_pid_param(void) {
-  char write_buffer[128];
-  uint16_t len = 0;
+/******************************************************************************************* */
 
-  switch (hfoc.control_mode) {
-  case TORQUE_CONTROL_MODE:
-    len = sprintf(write_buffer, "Current Control param:\n"
-                                "Kp(Id):%f\n"
-                                "Ki(Id):%f\n"
-                                "Kp(Iq):%f\n"
-                                "Ki(Iq):%f\n"
-                                "Deadband:%f\n"
-                                "Max output:%f\n",  
-                                hfoc.id_ctrl.kp, hfoc.id_ctrl.ki, 
-                                hfoc.iq_ctrl.kp, hfoc.iq_ctrl.ki, 
-                                hfoc.id_ctrl.e_deadband, hfoc.id_ctrl.out_max_dynamic);
-    break;
-  case SPEED_CONTROL_MODE:
-    len = sprintf(write_buffer, "Speed Control param:\n"
-                                "Kp:%f\n"
-                                "Ki:%f\n"
-                                "Deadband:%f\n"
-                                "Max output:%f\n",
-                                hfoc.speed_ctrl.kp, hfoc.speed_ctrl.ki, hfoc.speed_ctrl.e_deadband, hfoc.speed_ctrl.out_max);
-    break;
-  case POSITION_CONTROL_MODE:
-    len = sprintf(write_buffer, "Position Control param:\n"
-                                "Kp:%f\n"
-                                "Ki:%f\n"
-                                "Kd:%f\n"
-                                "Deadband:%f\n"
-                                "Max output:%f\n", 
-                                hfoc.pos_ctrl.kp, hfoc.pos_ctrl.ki, hfoc.pos_ctrl.kd, hfoc.pos_ctrl.e_deadband, hfoc.pos_ctrl.out_max);
-    break;
-  default:
-    len = sprintf(write_buffer, "Wrong Mode\n");
-    break;
+static int cli_parse(char *cmd, char *argv[], int max_args) {
+  int argc = 0;
+
+  while (*cmd && argc < max_args) {
+    /* skip leading spaces */
+    while (*cmd == ' ') {
+      cmd++;
+    }
+
+    if (*cmd == '\0') {
+      break;
+    }
+
+    argv[argc++] = cmd;
+
+    /* find end of token */
+    while (*cmd && *cmd != ' ') {
+      cmd++;
+    }
+
+    if (*cmd == '\0') {
+      break;
+    }
+
+    /* terminate token */
+    *cmd = '\0';
+    cmd++;
   }
-  CDC_Transmit_FS((uint8_t*)write_buffer, len);
+
+  return argc;
 }
 
-void print_mode(motor_mode_t mode) {
+
+/******************************************************************************************* */
+
+static void get_pid_all_parameter(PID_Controller_t *pid, const char *title) {
+  usb_print("%s control param:\r\n"
+            " kp:%f\r\n ki:%f\r\n kd:%f\r\n deadband:%f\r\n max out:%f\r\n",
+            title, pid->kp, pid->ki, pid->kd, pid->e_deadband, pid->out_max);
+}
+
+static void get_pid_kp_parameter(PID_Controller_t *pid, const char *title) {
+  usb_print("%s control param:\r\n"
+            " kp:%f\r\n",
+            title, pid->kp);
+}
+
+static void get_pid_ki_parameter(PID_Controller_t *pid, const char *title) {
+  usb_print("%s control param:\r\n"
+            " ki:%f\r\n",
+            title, pid->ki);
+}
+
+static void get_pid_kd_parameter(PID_Controller_t *pid, const char *title) {
+  usb_print("%s control param:\r\n"
+            " kd:%f\r\n",
+            title, pid->kd);
+}
+
+static void get_pid_deadband_parameter(PID_Controller_t *pid, const char *title) {
+  usb_print("%s control param:\r\n"
+            " deadband:%f\r\n",
+            title, pid->e_deadband);
+}
+
+static void get_pid_max_parameter(PID_Controller_t *pid, const char *title) {
+  usb_print("%s control param:\r\n"
+            " max out:%f\r\n",
+            title, pid->out_max);
+}
+
+
+static void get_foc_pid_all_parameter(PID_Controller_t *pid, const char *title) {
+  usb_print("%s control param:\r\n"
+            " kp:%f\r\n ki:%f\r\n kd:%f\r\n deadband:%f\r\n max out:%f\r\n",
+            title, pid->kp, pid->ki, pid->kd, pid->e_deadband, pid->out_max_dynamic);
+}
+
+static void get_foc_pid_max_parameter(PID_Controller_t *pid, const char *title) {
+  usb_print("%s control param:\r\n"
+            " max out:%f\r\n",
+            title, pid->out_max_dynamic);
+}
+
+/******************************************************************************************* */
+
+static void print_mode(motor_mode_t mode) {
   char write_buffer[64];
   uint16_t len = 0;
 
   switch (mode) {
   case TORQUE_CONTROL_MODE:
-    len = sprintf(write_buffer, "Control Mode[0]: Current Control\n");
+    len = snprintf(write_buffer, sizeof(write_buffer), "Control Mode[0]: Current Control\n");
     break;
   case SPEED_CONTROL_MODE:
-    len = sprintf(write_buffer, "Control Mode[1]: Speed Control\n");
+    len = snprintf(write_buffer, sizeof(write_buffer), "Control Mode[1]: Speed Control\n");
     break;
   case POSITION_CONTROL_MODE:
-    len = sprintf(write_buffer, "Control Mode[2]: Position Control\n");
+    len = snprintf(write_buffer, sizeof(write_buffer), "Control Mode[2]: Position Control\n");
     break;
   case CALIBRATION_MODE:
-    len = sprintf(write_buffer, "Control Mode[3]: Calibration\n");
+    len = snprintf(write_buffer, sizeof(write_buffer), "Control Mode[3]: Calibration\n");
     break;
   case AUDIO_MODE:
-    len = sprintf(write_buffer, "Control Mode[4]: Audio\n");
+    len = snprintf(write_buffer, sizeof(write_buffer), "Control Mode[4]: Audio\n");
     break;
   default:
-    len = sprintf(write_buffer, "Wrong Mode\n");
+    len = snprintf(write_buffer, sizeof(write_buffer), "Wrong Mode\n");
     break;
   }
   CDC_Transmit_FS((uint8_t*)write_buffer, len);
 }
 
-void parse_command(char *cmd) {
-	_Bool set_pid_detected = 0;
+/******************************************************************************************* */
 
-	if (strstr(cmd, "cal")) {
+static void print_motor_param(void) {
+  usb_print("motor param:\r\n"
+            " Rs:%f\r\n" 
+            " Ld:%f\r\n" 
+            " Lq:%f\r\n" 
+            " pole pairs:%d\r\n" 
+            " Kv:%f\r\n", 
+            hfoc.Rs, hfoc.Ld, hfoc.Lq, hfoc.pole_pairs, hfoc.kv);
+}
+
+/******************************************************************************************* */
+
+static void add_plot_point(const char *cmd) {
+  int total_points = 0;
+  float *point = NULL;
+  _Bool is_point_available = 0;
+  char point_name[MAX_DATA_PLOT];
+  float dummy[MAX_DATA_PLOT] = {0.0f};
+
+  for (int i = 0; source_plot[i].addr != NULL && i < MAX_DATA_PLOT; i++) {
+    total_points++;
+  }
+
+  // current 
+  if (strstr(cmd, "ia")) {
+    point = &hfoc.ia;
+    snprintf(point_name, sizeof(point_name), "ia");
+  }
+  else if (strstr(cmd, "ib")) {
+    point = &hfoc.ib;
+    snprintf(point_name, sizeof(point_name), "ib");
+  }
+  else if (strstr(cmd, "ic")) {
+    point = &hfoc.ic;
+    snprintf(point_name, sizeof(point_name), "ic");
+  }
+  else if (strstr(cmd, "i_alpha")) {
+    point = &hfoc.i_alpha;
+    snprintf(point_name, sizeof(point_name), "i_alpha");
+  }
+  else if (strstr(cmd, "i_beta")) {
+    point = &hfoc.i_beta;
+    snprintf(point_name, sizeof(point_name), "i_beta");
+  }
+  else if (strstr(cmd, "id")) {
+    point = &hfoc.id;
+    snprintf(point_name, sizeof(point_name), "id");
+  }
+  else if (strstr(cmd, "iq")) {
+    point = &hfoc.iq;
+    snprintf(point_name, sizeof(point_name), "iq");
+  }
+  // voltage
+  else if (strstr(cmd, "va")) {
+    point = &hfoc.va;
+    snprintf(point_name, sizeof(point_name), "va");
+  }
+  else if (strstr(cmd, "vb")) {
+    point = &hfoc.vb;
+    snprintf(point_name, sizeof(point_name), "vb");
+  }
+  else if (strstr(cmd, "vc")) {
+    point = &hfoc.vc;
+    snprintf(point_name, sizeof(point_name), "vc");
+  }
+  else if (strstr(cmd, "v_alpha")) {
+    point = &hfoc.v_alpha;
+    snprintf(point_name, sizeof(point_name), "v_alpha");
+  }
+  else if (strstr(cmd, "v_beta")) {
+    point = &hfoc.v_beta;
+    snprintf(point_name, sizeof(point_name), "v_beta");
+  }
+  else if (strstr(cmd, "vd")) {
+    point = &hfoc.vd;
+    snprintf(point_name, sizeof(point_name), "vd");
+  }
+  else if (strstr(cmd, "vq")) {
+    point = &hfoc.vq;
+    snprintf(point_name, sizeof(point_name), "vq");
+  }
+  // v bus
+  else if (strstr(cmd, "v_bus")) {
+    point = &hfoc.v_bus;
+    snprintf(point_name, sizeof(point_name), "v_bus");
+  }
+  
+  else if (strstr(cmd, "rpm")) {
+    point = &hfoc.actual_rpm;
+    snprintf(point_name, sizeof(point_name), "rpm");
+  }
+  else if (strstr(cmd, "e_rad")) {
+    point = &hfoc.e_rad;
+    snprintf(point_name, sizeof(point_name), "e_rad");
+  }
+  else if (strstr(cmd, "m_deg")) {
+    point = &hfoc.actual_angle;
+    snprintf(point_name, sizeof(point_name), "m_deg");
+  }
+
+  if (point == NULL) return;
+  for (int i = 0; source_plot[i].addr != NULL && i < MAX_DATA_PLOT; i++) {
+    if (source_plot[i].addr == point){
+      is_point_available = 1;
+    }
+  }
+  if (!is_point_available) {
+    source_plot[total_points].addr = point;
+    memcpy(source_plot[total_points].name, point_name, MAX_NAME_POINT);
+    send_data_float(dummy, total_points+1); osDelay(1);
+    change_legend(total_points, point_name); osDelay(2);
+    // erase_graph(); osDelay(1);
+  }
+}
+
+static void remove_plot_point(const char *cmd) {
+  int total_points = 0;
+  float *point = NULL;
+  _Bool is_point_available = 0;
+  uint8_t start_idx;
+  float dummy[MAX_DATA_PLOT] = {0.0f};
+
+  // current 
+  if (strstr(cmd, "ia")) {
+    point = &hfoc.ia;
+  }
+  else if (strstr(cmd, "ib")) {
+    point = &hfoc.ib;
+  }
+  else if (strstr(cmd, "ic")) {
+    point = &hfoc.ic;
+  }
+  else if (strstr(cmd, "i_alpha")) {
+    point = &hfoc.i_alpha;
+  }
+  else if (strstr(cmd, "i_beta")) {
+    point = &hfoc.i_beta;
+  }
+  else if (strstr(cmd, "id")) {
+    point = &hfoc.id;
+  }
+  else if (strstr(cmd, "iq")) {
+    point = &hfoc.iq;
+  }
+  // voltage
+  else if (strstr(cmd, "va")) {
+    point = &hfoc.va;
+  }
+  else if (strstr(cmd, "vb")) {
+    point = &hfoc.vb;
+  }
+  else if (strstr(cmd, "vc")) {
+    point = &hfoc.vc;
+  }
+  else if (strstr(cmd, "v_alpha")) {
+    point = &hfoc.v_alpha;
+  }
+  else if (strstr(cmd, "v_beta")) {
+    point = &hfoc.v_beta;
+  }
+  else if (strstr(cmd, "vd")) {
+    point = &hfoc.vd;
+  }
+  else if (strstr(cmd, "vq")) {
+    point = &hfoc.vq;
+  }
+  // v bus
+  else if (strstr(cmd, "v_bus")) {
+    point = &hfoc.v_bus;
+  }
+
+  else if (strstr(cmd, "rpm")) {
+    point = &hfoc.actual_rpm;
+  }
+  else if (strstr(cmd, "e_rad")) {
+    point = &hfoc.e_rad;
+  }
+  else if (strstr(cmd, "m_deg")) {
+    point = &hfoc.actual_angle;
+  }
+
+  if (point == NULL) return;
+  for (int i = 0; source_plot[i].addr != NULL && i < MAX_DATA_PLOT; i++) {
+    if (source_plot[i].addr == point){
+      start_idx = i;
+      is_point_available = 1;
+    }
+  }
+  if (is_point_available) {
+    for (int i = start_idx; i < MAX_DATA_PLOT-1; i++) {
+      source_plot[i].addr = source_plot[i+1].addr;
+      memcpy(source_plot[i].name, source_plot[i+1].name, MAX_NAME_POINT);
+    }
+    source_plot[MAX_DATA_PLOT-1].addr = NULL;
+    memset(source_plot[MAX_DATA_PLOT-1].name, '\0', MAX_NAME_POINT);
+    
+    for (int i = 0; source_plot[i].addr != NULL && i < MAX_DATA_PLOT; i++) {
+      total_points++;
+    }
+
+    erase_graph(); osDelay(1);
+    send_data_float(dummy, total_points); osDelay(1);
+    for (int i = 0; i < total_points; i++) {
+      change_legend(i, source_plot[i].name); osDelay(2);
+    }
+  }
+}
+
+void parse_command(char *cmd) {
+  char *argv[CLI_MAX_ARGS];
+  int argc = cli_parse(cmd, argv, CLI_MAX_ARGS);
+  _Bool need_to_save = 0;
+
+  if (strstr(argv[0], "plot")) {
+    if (strstr(argv[1], "add")) {
+      if (argc == 3) {
+        add_plot_point(argv[2]);
+      }
+    }
+    else if (strstr(argv[1], "rm")) {
+      if (argc == 3) {
+        remove_plot_point(argv[2]);
+      }
+    }
+  }
+  else if (strstr(argv[0], "pid")) {
+    PID_Controller_t *pid = NULL;
+    _Bool foc = 0;
+
+    if (strstr(argv[1], "id")) {
+      pid = &hfoc.id_ctrl;
+      foc = 1;
+    }
+    else if (strstr(argv[1], "iq")) {
+      pid = &hfoc.iq_ctrl;
+      foc = 1;
+    }
+    else if (strstr(argv[1], "speed")) {
+      pid = &hfoc.speed_ctrl;
+    }
+    else if (strstr(argv[1], "position")) {
+      pid = &hfoc.pos_ctrl;
+    }
+
+    if (pid == NULL) return;
+
+    if (argc == 2) {
+      if (foc) {
+        get_foc_pid_all_parameter(pid, argv[1]);
+      }
+      else {
+        get_pid_all_parameter(pid, argv[1]);
+      }
+    }
+    else if (argc >= 3) {
+      float val = 0.0f;
+
+      if (strstr(argv[2], "bw") && foc) {
+		    if (argc == 4) {
+          val = atof(argv[3]);
+          hfoc.I_ctrl_bandwidth = val;
+          m_config.I_ctrl_bandwidth = val;
+          flash_auto_tuning_torque_control(&m_config);
+          hfoc.id_ctrl.kp = m_config.id_kp;
+          hfoc.id_ctrl.ki = m_config.id_ki;
+          hfoc.iq_ctrl.kp = m_config.iq_kp;
+          hfoc.iq_ctrl.ki = m_config.iq_ki;
+          usb_print(" new bw:%.2f\r\n", hfoc.I_ctrl_bandwidth);
+        }
+        else {
+          usb_print(" bw:%.2f\r\n", hfoc.I_ctrl_bandwidth);
+        }
+      }
+      else if (strstr(argv[2], "kp")) {
+		    if (argc == 4) {
+          val = atof(argv[3]);
+          pid->kp = val;
+          need_to_save = 1;
+        }
+        else {
+          get_pid_kp_parameter(pid, argv[1]);
+        }
+      }
+      else if (strstr(argv[2], "ki")) {
+		    if (argc == 4) {
+          val = atof(argv[3]);
+          pid->ki = val;
+          need_to_save = 1;
+        }
+        else {
+          get_pid_ki_parameter(pid, argv[1]);
+        }
+      }
+      else if (strstr(argv[2], "kd")) {
+		    if (argc == 4) {
+          val = atof(argv[3]);
+          pid->kd = val;
+          need_to_save = 1;
+        }
+        else {
+          get_pid_kd_parameter(pid, argv[1]);
+        }
+      }
+      else if (strstr(argv[2], "deadband")) {
+		    if (argc == 4) {
+          val = atof(argv[3]);
+          pid->e_deadband = val;
+          need_to_save = 1;
+        }
+        else {
+          get_pid_deadband_parameter(pid, argv[1]);
+        }
+      }
+      else if (strstr(argv[2], "max")) {
+		    if (argc == 4) {
+          val = atof(argv[3]);
+          if (foc) {
+            pid->out_max_dynamic = val;
+          }
+          else {
+            pid->out_max = val;
+          }
+          need_to_save = 1;
+        }
+        else {
+          if (foc) {
+            get_foc_pid_max_parameter(pid, argv[1]);
+          }
+          else {
+            get_pid_max_parameter(pid, argv[1]);
+          }
+        }
+      }
+    }
+  }
+  else if (strstr(argv[0], "calib")) {
     usb_print("start callibration\r\n");
     hfoc.control_mode = CALIBRATION_MODE;
     calibration_flag = 1;
   }
-	else if (strstr(cmd, "run")) {
-    // usb_print("start test pulse response\r\n");
-    // hfoc.control_mode = TEST_MODE;
-    // test_bw_flag = 1;
-    usb_print("start demo\r\n");
-    pos_demo_flag = 1;
-  }
-	else if (strstr(cmd, "stop")) {
-    usb_print("stop demo\r\n");
-    pos_demo_flag = 0;
-  }
-	else if (strstr(cmd, "get_bandwidth")) {
-    usb_print("Current Bandwidth:%.2f\r\n", hfoc.I_ctrl_bandwidth);
-  }
-	else if (strstr(cmd, "set_bandwidth")) {
-    float bandwidth;
-		parse_float_value(cmd, '=', &bandwidth);
-    hfoc.I_ctrl_bandwidth = bandwidth;
-    m_config.I_ctrl_bandwidth = bandwidth;
-    flash_auto_tuning_torque_control(&m_config);
-    hfoc.id_ctrl.kp = m_config.id_kp;
-    hfoc.id_ctrl.ki = m_config.id_ki;
-    hfoc.iq_ctrl.kp = m_config.iq_kp;
-    hfoc.iq_ctrl.ki = m_config.iq_ki;
+	else if (strstr(argv[0], "mode") != NULL) {
+    if (argc == 2) {
+      motor_mode_t mode = TORQUE_CONTROL_MODE;
+      mode = (motor_mode_t)atoi(argv[1]);
+      print_mode(mode);
 
-    usb_print("New Bandwidth:%.2f\r\n", hfoc.I_ctrl_bandwidth);
+      if (mode <= AUDIO_MODE) {
+        hfoc.control_mode = mode;
+        sp_input = 0;
+      }
+    }
 	}
-	else if (strstr(cmd, "sp")) {
-		parse_float_value(cmd, '=', &sp_input);
+	else if (strstr(argv[0], "sp")) {
+    if (argc == 2) {
+      sp_input = atof(argv[1]);
+    }
 	}
-	else if (strstr(cmd, "kp")) {
-    float kp;
-		parse_float_value(cmd, '=', &kp);
+  else if (strstr(argv[0], "ratio") != NULL) {
+    if (argc == 2) {
+      float ratio = atof(argv[1]);
+      if (ratio <= 0.0f) return;
+      hfoc.gear_ratio = ratio;
 
-    switch (hfoc.control_mode) {
-      case TORQUE_CONTROL_MODE:
-        hfoc.id_ctrl.kp = kp;
-        m_config.id_kp = kp;
-        hfoc.iq_ctrl.kp = kp;
-        m_config.iq_kp = kp;
-        break;
-      case SPEED_CONTROL_MODE:
-        hfoc.speed_ctrl.kp = kp;
-        m_config.speed_kp = kp;
-        break;
-      case POSITION_CONTROL_MODE:
-        hfoc.pos_ctrl.kp = kp;
-        m_config.pos_kp = kp;
-        break;
-      default:
-      break;
+      need_to_save = 1;
     }
-		set_pid_detected = 1;
-	}
-	else if (strstr(cmd, "ki")) {
-    float ki;
-		parse_float_value(cmd, '=', &ki);
-    
-    switch (hfoc.control_mode) {
-      case TORQUE_CONTROL_MODE:
-        hfoc.id_ctrl.ki = ki;
-        m_config.id_ki = ki;
-        hfoc.iq_ctrl.ki = ki;
-        m_config.iq_ki = ki;
-        break;
-      case SPEED_CONTROL_MODE:
-        hfoc.speed_ctrl.ki = ki;
-        m_config.speed_ki = ki;
-        break;
-      case POSITION_CONTROL_MODE:
-        hfoc.pos_ctrl.ki = ki;
-        m_config.pos_ki = ki;
-        break;
-      default:
-        break;
-    }
-		set_pid_detected = 1;
-	}
-	else if (strstr(cmd, "kd")) {
-    float kd;
-		parse_float_value(cmd, '=', &kd);
-    
-    switch (hfoc.control_mode) {
-      case POSITION_CONTROL_MODE:
-        hfoc.pos_ctrl.kd = kd;
-        m_config.pos_kd = kd;
-        break;
-      default:
-        break;
-    }
-		set_pid_detected = 1;
-	}
-  else if (strstr(cmd, "deadband")) {
-    float db;
-		parse_float_value(cmd, '=', &db);
-    
-    switch (hfoc.control_mode) {
-      case TORQUE_CONTROL_MODE:
-        hfoc.id_ctrl.e_deadband = db;
-        m_config.id_e_deadband = db;
-        hfoc.iq_ctrl.e_deadband = db;
-        m_config.iq_e_deadband = db;
-        break;
-      case SPEED_CONTROL_MODE:
-        hfoc.speed_ctrl.e_deadband = db;
-        m_config.speed_e_deadband = db;
-        break;
-      case POSITION_CONTROL_MODE:
-        hfoc.pos_ctrl.e_deadband = db;
-        m_config.pos_e_deadband = db;
-        break;
-      default:
-      break;
-    }
-		set_pid_detected = 1;
   }
-  else if (strstr(cmd, "max")) {
-    float max;
-		parse_float_value(cmd, '=', &max);
-    
-    switch (hfoc.control_mode) {
-      case TORQUE_CONTROL_MODE:
-        hfoc.id_ctrl.out_max_dynamic = max;
-        m_config.id_out_max = max;
-        hfoc.iq_ctrl.out_max_dynamic = max;
-        m_config.iq_out_max = max;
-        break;
-      case SPEED_CONTROL_MODE:
-        hfoc.speed_ctrl.out_max = max;
-        m_config.speed_out_max = max;
-        break;
-      case POSITION_CONTROL_MODE:
-        hfoc.pos_ctrl.out_max = max;
-        m_config.pos_out_max = max;
-        break;
-      default:
-        break;
-    }
-		set_pid_detected = 1;
-  }
-	else if (strstr(cmd, "mode") != NULL) {
-    motor_mode_t mode = TORQUE_CONTROL_MODE;
-
-		parse_int_value(cmd, '=', (int*)&mode);
-    print_mode(mode);
-
-    if (mode <= AUDIO_MODE) {
-      hfoc.control_mode = mode;
-      sp_input = 0;
-    }
-	}
-  else if (strstr(cmd, "ratio") != NULL) {
-    float ratio;
-		parse_float_value(cmd, '=', &ratio);
-    hfoc.gear_ratio = ratio;
-  }
-  else if (strstr(cmd, "set_zero") != NULL) {
-    usb_print("success set zero offset\r\n");
-  }
-  else if (strstr(cmd, "save") != NULL) {
+  else if (strstr(argv[0], "save") != NULL) {
     flash_save_config(&m_config);
-    usb_print("success save configuration\r\n");
+    usb_print(" success save configuration\r\n");
   }
-  else if (strstr(cmd, "set_default") != NULL) {
+  else if (strstr(argv[0], "set_default") != NULL) {
     flash_default_config(&m_config);
-    usb_print("success reset configuration\r\n");
+    usb_print(" success reset configuration\r\n");
   }
-  else if (strstr(cmd, "get_param") != NULL) {
-    get_pid_param();
+  else if (strstr(argv[0], "motor_param") != NULL) {
+    print_motor_param();
   }
 
-	if (set_pid_detected) {
-    get_pid_param();
-	}
+  if (need_to_save) {
+    copy_from_local(&m_config, &hfoc);
+    usb_print(" OK\r\n");
+  }
 }

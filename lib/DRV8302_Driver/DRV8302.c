@@ -46,6 +46,11 @@ void DRV8302_GPIO_ENGATE_config(DRV8302_t *cfg, GPIO_TypeDef *port, uint16_t pin
 	cfg->en_gate_pin = pin;
 }
 
+void DRV8302_ADC_config(DRV8302_t *cfg, volatile uint32_t *adc_ia, volatile uint32_t *adc_ib) {
+    cfg->adc_ia = adc_ia;
+    cfg->adc_ib = adc_ib;
+}
+
 static uint32_t get_timer_clock(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM1 || htim->Instance == TIM8 || 
         htim->Instance == TIM9 || htim->Instance == TIM10 || 
@@ -167,9 +172,9 @@ int DRV8302_init(DRV8302_t *cfg) {
 }
 
 void DRV8302_set_pwm(DRV8302_t *cfg, uint32_t pwma, uint32_t pwmb, uint32_t pwmc) {
-    cfg->timer->Instance->CCR1 = pwma;
+    cfg->timer->Instance->CCR3 = pwma;
     cfg->timer->Instance->CCR2 = pwmb;
-    cfg->timer->Instance->CCR3 = pwmc;
+    cfg->timer->Instance->CCR1 = pwmc;
 }
 
 void DRV8302_get_current(DRV8302_t *cfg, float *ia, float *ib) {
@@ -178,8 +183,8 @@ void DRV8302_get_current(DRV8302_t *cfg, float *ia, float *ib) {
     static float ib_filtered = 0.0f;
 
     // Convert to voltage
-    const float vshunt_a = (float)cfg->adc_a * ADC_2_VOLT;
-    const float vshunt_b = (float)cfg->adc_b * ADC_2_VOLT;
+    const float vshunt_a = (float)*cfg->adc_ia * ADC_2_VOLT;
+    const float vshunt_b = (float)*cfg->adc_ib * ADC_2_VOLT;
 
     // Compute raw phase currents (with shunt resistor gain and polarity)
     float ia_raw = (vshunt_a - cfg->v_offset_a) * cfg->v_to_current;

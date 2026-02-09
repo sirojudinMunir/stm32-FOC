@@ -36,7 +36,53 @@ Built using **PlatformIO**, **STM32 HAL/LL drivers**, and **FreeRTOS**, this pro
 
 ---
 
+## Simple Command Line Interface (CLI)
+
+- change control mode: `mode <mode>`  
+`<mode>`:  
+  `0` -> torque/current control  
+  `1` -> speed control  
+  `2` -> position control  
+- change set point: `sp <value>`  
+- run self commissioning: `calib`  
+- read motor parameters: `motor_param`  
+- read all PID parameters: `pid <control>`  
+`<control>`:  
+  `id` -> direct current control  
+  `iq` -> quadrature current control  
+  `speed` -> speed control  
+  `position` -> position control  
+- read PID specific parameter: `pid <control> <param>`  
+`<param>`:  
+  `kp` -> proportional gain  
+  `ki` -> integral gain  
+  `kd` -> derivative gain  
+  `deadband` -> error deadband (min error)  
+  `max` -> max output   
+- write PID parameter: `pid <control> <param> <value>`  
+- save changes to flash memory: `save`  
+- reset settingst: `set_default`  
+- add/remove plot variable: `plot <action> <param>`  
+`<action>`:  
+  `add` -> add parameter to plot  
+  `rm` -> remove parameter from plot  
+`<param>`:  
+  `ia`, `ib`, `ic` → phase current (A)  
+  `i_alpha`, `i_beta` → alpha / beta current (A)  
+  `id`, `iq` → d–q current (A)  
+  `va`, `vb`, `vc` → phase voltage (V)  
+  `v_alpha`, `v_beta` → alpha / beta voltage (V)  
+  `vd`, `vq` → d–q voltage (V)  
+  `v_bus` → DC bus voltage (V)  
+  `rpm` → motor speed (RPM)  
+  `e_rad` → electrical angle (radian)  
+  `m_deg` → mechanical angle (degree)  
+
 ## UPDATE LOG
+
+08-02-2026
+- Change CLI format
+- Integrate sensorless and sensored in one function and struct
 
 03-02-2026
 - Add Initial position detection with polarity judgement

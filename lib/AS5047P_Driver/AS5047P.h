@@ -52,7 +52,7 @@ extern _Bool encd_get_val_flag;
 int AS5047P_config(AS5047P_t *encd, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin);
 int AS5047P_start(AS5047P_t *encd);
 float AS5047P_get_degree(AS5047P_t *encd);
-float AS5047P_get_rpm(AS5047P_t *encd, uint32_t dt_us);
+float AS5047P_get_rpm(AS5047P_t *encd, float Ts);
 float AS5047P_get_actual_degree(AS5047P_t *encd);
 
 int AS5047P_readCommand(AS5047P_t *encd, uint8_t *cmd, uint8_t *receive_buffer);

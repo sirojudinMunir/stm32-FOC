@@ -114,33 +114,15 @@ float AS5047P_get_degree(AS5047P_t *encd) {
 }
 
 
-float AS5047P_get_rpm(AS5047P_t *encd, uint32_t dt_us) {
+float AS5047P_get_rpm(AS5047P_t *encd, float Ts) {
     // Handle angle wrap-around (optimized)
     float angle_diff = encd->angle_filtered - encd->prev_angle;
     angle_diff -= 360.0f * floorf((angle_diff + 180.0f) * (1.0f/360.0f));
     encd->prev_angle = encd->angle_filtered;
 
-#if 0
-    // Accumulate angle and time for low-RPM precision
-    encd->angle_accumulator += angle_diff;
-    encd->time_accumulator += dt_us;
+    // Calculate RPM
+    float rpm_instant = (angle_diff * 60.0f) / (Ts * DEGREES_PER_REV);
 
-    // Only calculate RPM when sufficient data is collected
-    if (encd->time_accumulator < MIN_DT_US && encd->filtered_rpm > 1.0f) {
-        return encd->filtered_rpm;
-    }
-
-    // Calculate RPM (optimized floating point)
-    float rpm_instant = (encd->angle_accumulator * MICROS_TO_MINUTES) /
-                        (encd->time_accumulator * DEGREES_PER_REV);
-
-    // Reset accumulators
-    encd->angle_accumulator = 0.0f;
-    encd->time_accumulator = 0;
-#else
-    // Calculate RPM (optimized floating point)
-    float rpm_instant = (angle_diff * MICROS_TO_MINUTES) / (dt_us * DEGREES_PER_REV);
-#endif
     // Two-stage spike rejection
     float rpm_delta = rpm_instant - encd->prev_rpm;
     float abs_delta = fabsf(rpm_delta);
@@ -176,7 +158,7 @@ float AS5047P_get_actual_degree(AS5047P_t *encd) {
 	else if (angle_dif> 180) {
 		encd->output_angle_ovf--;
 	}
-	float out_deg = (m_current_angle + encd->output_angle_ovf * 360.0 + ACTUAL_ANGLE_OFFSET);
+	float out_deg = (m_current_angle + encd->output_angle_ovf * 360.0f + ACTUAL_ANGLE_OFFSET);
     encd->output_angle_filtered = (1.0f - ACTUAL_ANGLE_FILTER_ALPHA) * encd->output_angle_filtered + ACTUAL_ANGLE_FILTER_ALPHA * out_deg;
 	encd->output_prev_angle = m_current_angle;
 

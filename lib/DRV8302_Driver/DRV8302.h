@@ -42,8 +42,13 @@ typedef struct {
 	uint16_t en_gate_pin;
 
     TIM_HandleTypeDef *timer;
-	uint32_t adc_a;
-	uint32_t adc_b;
+
+	volatile uint32_t *adc_ia;
+	volatile uint32_t *adc_ib;
+
+	volatile uint32_t *pwm_a;
+	volatile uint32_t *pwm_b;
+	volatile uint32_t *pwm_c;
 
 	uint32_t pwm_freq;
 	uint32_t pwm_resolution;
@@ -68,9 +73,6 @@ typedef struct {
 #define DRV8302_disable_dc_cal(cfg) ((cfg)->dc_cal_port->BSRR = (cfg)->dc_cal_pin<<16)
 #endif
 
-#define DRV8302_set_adc_a(cfg, val) ((cfg)->adc_a = val)
-#define DRV8302_set_adc_b(cfg, val) ((cfg)->adc_b = val)
-
 void DRV8302_GPIO_MPWM_config(DRV8302_t *cfg, GPIO_TypeDef *port, uint16_t pin);
 void DRV8302_GPIO_MOC_config(DRV8302_t *cfg, GPIO_TypeDef *port, uint16_t pin);
 void DRV8302_GPIO_GAIN_config(DRV8302_t *cfg, GPIO_TypeDef *port, uint16_t pin);
@@ -78,6 +80,7 @@ void DRV8302_GPIO_DCCAL_config(DRV8302_t *cfg, GPIO_TypeDef *port, uint16_t pin)
 void DRV8302_GPIO_OCTW_config(DRV8302_t *cfg, GPIO_TypeDef *port, uint16_t pin);
 void DRV8302_GPIO_FAULT_config(DRV8302_t *cfg, GPIO_TypeDef *port, uint16_t pin);
 void DRV8302_GPIO_ENGATE_config(DRV8302_t *cfg, GPIO_TypeDef *port, uint16_t pin);
+void DRV8302_ADC_config(DRV8302_t *cfg, volatile uint32_t *adc_ia, volatile uint32_t *adc_ib);
 int DRV8302_TIMER_config(DRV8302_t *cfg, TIM_HandleTypeDef *timer, uint32_t freq);
 int DRV8302_current_sens_config(DRV8302_t *cfg, CSA_gain_t gain, float R_shunt, float v_offset_a, float v_offset_b);
 int DRV8302_stop_pwm(DRV8302_t *cfg);

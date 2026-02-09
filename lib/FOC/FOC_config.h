@@ -1,6 +1,14 @@
 #ifndef FOC_CONFIG_H_
 #define FOC_CONFIG_H_
 
+#define BLDC_PWM_FREQ 10000
+#define SPEED_CONTROL_CYCLE	10
+#define POSITION_CONTROL_CYCLE 100
+
+#define FOC_TS (1.0f / (float)BLDC_PWM_FREQ)
+#define SPEED_TS (FOC_TS * SPEED_CONTROL_CYCLE) 
+#define POSITION_TS (FOC_TS * POSITION_CONTROL_CYCLE)
+
 #define MAX_I_SAMPLE 128
 
 #define MAX_SAMPLE_BUFF 1024
@@ -31,5 +39,17 @@
 #define PD_V_PULSE 3.0f
 #define PD_PULSE_TIME 5
 #define PD_WAITING_TIME 10
+
+/* Magnetic Encoder Callibration Parameters */
+#define CAL_ITERATION 100
+#define VD_CAL 0.6f
+#define VQ_CAL 0.0f
+
+// configuration with FreeRTOS
+#include "cmsis_os.h"
+
+// delay ms
+#define foc_delay_ms(ms) osDelay(ms)
+
 
 #endif

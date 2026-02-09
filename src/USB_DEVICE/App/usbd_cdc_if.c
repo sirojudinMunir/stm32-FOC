@@ -109,6 +109,8 @@ extern USBD_HandleTypeDef hUsbDeviceFS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
 extern _Bool com_init_flag;
+extern uint8_t *usb_recv;
+extern _Bool usb_recv_flag;
 /* USER CODE END EXPORTED_VARIABLES */
 
 /**
@@ -277,8 +279,8 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 		parse_piano(Buf);
 	}
   
-  // parse all commands
-  parse_command((char *)Buf);
+  usb_recv = Buf;
+  usb_recv_flag = 1;
 
 	return (USBD_OK);
   /* USER CODE END 6 */

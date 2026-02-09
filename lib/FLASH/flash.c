@@ -88,6 +88,73 @@ void flash_default_config(motor_config_t *data) {
     data->Lq = 0.000160f;
 }
 
+void copy_to_local(motor_config_t *data, foc_t *hfoc) {
+    hfoc->id_ctrl.kp = data->id_kp;
+    hfoc->id_ctrl.ki = data->id_ki;
+    hfoc->id_ctrl.out_max_dynamic = data->id_out_max;
+    hfoc->id_ctrl.e_deadband = data->id_e_deadband;
+    
+    hfoc->iq_ctrl.kp = data->iq_kp;
+    hfoc->iq_ctrl.ki = data->iq_ki;
+    hfoc->iq_ctrl.out_max_dynamic = data->iq_out_max;
+    hfoc->iq_ctrl.e_deadband = data->iq_e_deadband;
+
+    hfoc->I_ctrl_bandwidth = data->I_ctrl_bandwidth;
+    
+    hfoc->speed_ctrl.kp = data->speed_kp;
+    hfoc->speed_ctrl.ki = data->speed_ki;
+    hfoc->speed_ctrl.out_max = data->speed_out_max;
+    hfoc->speed_ctrl.e_deadband = data->speed_e_deadband;
+    
+    hfoc->pos_ctrl.kp = data->pos_kp;
+    hfoc->pos_ctrl.ki = data->pos_ki;
+    hfoc->pos_ctrl.kd = data->pos_kd;
+    hfoc->pos_ctrl.out_max = data->pos_out_max;
+    hfoc->pos_ctrl.e_deadband = data->pos_e_deadband;
+
+    hfoc->drv8302.v_offset_a = data->voffset_a;
+    hfoc->drv8302.v_offset_b = data->voffset_b;
+
+    hfoc->sensor_dir = data->dir;
+    hfoc->gear_ratio = data->gear_ratio;
+
+    hfoc->Rs = data->Rs;
+    hfoc->Ld = data->Ld;
+    hfoc->Lq = data->Lq;
+}
+
+void copy_from_local(motor_config_t *data, foc_t *hfoc) {
+    data->id_kp = hfoc->id_ctrl.kp;
+    data->id_ki = hfoc->id_ctrl.ki;
+    data->id_out_max = hfoc->id_ctrl.out_max_dynamic;
+    data->id_e_deadband = hfoc->id_ctrl.e_deadband;
+
+    data->iq_kp = hfoc->iq_ctrl.kp;
+    data->iq_ki = hfoc->iq_ctrl.ki;
+    data->iq_out_max = hfoc->iq_ctrl.out_max_dynamic;
+    data->iq_e_deadband = hfoc->iq_ctrl.e_deadband;
+
+    data->I_ctrl_bandwidth = hfoc->I_ctrl_bandwidth;
+
+    data->speed_kp = hfoc->speed_ctrl.kp;
+    data->speed_ki = hfoc->speed_ctrl.ki;
+    data->speed_out_max = hfoc->speed_ctrl.out_max;
+    data->speed_e_deadband = hfoc->speed_ctrl.e_deadband;
+
+    data->pos_kp = hfoc->pos_ctrl.kp;
+    data->pos_ki = hfoc->pos_ctrl.ki;
+    data->pos_kd = hfoc->pos_ctrl.kd;
+    data->pos_out_max = hfoc->pos_ctrl.out_max;
+    data->pos_e_deadband = hfoc->pos_ctrl.e_deadband;
+
+    data->dir = hfoc->sensor_dir;
+    data->gear_ratio = hfoc->gear_ratio;
+
+    data->Rs = hfoc->Rs;
+    data->Ld = hfoc->Ld;
+    data->Lq = hfoc->Lq;
+}
+
 
 void flash_auto_tuning_torque_control(motor_config_t *data) {
   if (data->Rs <= 0.0f || data->Rs > 3.0f ||

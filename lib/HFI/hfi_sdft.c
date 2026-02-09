@@ -9,11 +9,13 @@ void hfi_init(hfi_t *hhfi, float v_h, float f_h, float sampling_freq) {
     hhfi->f_h = f_h;
     pll_init(&hhfi->pll, 2000.0f, 6000.0f, 1.0f, 50000.0f);
     
-    hhfi->sdft_window_size = sampling_freq / f_h;
+    // hhfi->sdft_window_size = sampling_freq / f_h;
+    hhfi->sdft_window_size = 20;
     hhfi->sdft_buff_idx = 0;
     
     // calculate rotation factor: e^(j2pi/N) for k=1
-    float theta = TWO_PI / hhfi->sdft_window_size;
+    // float theta = TWO_PI / hhfi->sdft_window_size;
+    float theta = TWO_PI * 2.0f / hhfi->sdft_window_size;
     hhfi->sdft_rotation_factor.real = fast_cos(theta);
     hhfi->sdft_rotation_factor.imag = fast_sin(theta);
 
@@ -23,10 +25,8 @@ void hfi_init(hfi_t *hhfi, float v_h, float f_h, float sampling_freq) {
     }
     
     // Reset SDFT state
-    hhfi->Xk_real = 0.0f;
-    hhfi->Xk_imag = 0.0f;
-    hhfi->last_Xk.real = 0.0f;
-    hhfi->last_Xk.imag = 0.0f;
+    hhfi->last_Xk_iq.real = 0.0f;
+    hhfi->last_Xk_iq.imag = 0.0f;
 }
 
 void hfi_update_estimate_position(hfi_t *hhfi, float iq, float Ts) {
@@ -40,11 +40,11 @@ void hfi_update_estimate_position(hfi_t *hhfi, float iq, float Ts) {
     // SDFT: X_k[n] = e^(j2pik/N) * (X_k[n-1] + x[n] - x[n-N])
     float delta = iq - oldest_iq;
     complex_t delta_complex = {delta, 0.0f};
-    complex_t sum = complex_add(hhfi->last_Xk, delta_complex);
+    complex_t sum = complex_add(hhfi->last_Xk_iq, delta_complex);
     
     // Multiply with rotation factor
     complex_t Xk_new = complex_multiply(sum, hhfi->sdft_rotation_factor);
-    hhfi->last_Xk = Xk_new;
+    hhfi->last_Xk_iq = Xk_new;
     
     // Extract amplitude (eq 14)
     hhfi->sdft_amplitude = 2.0f * sqrtf(Xk_new.real * Xk_new.real + Xk_new.imag * Xk_new.imag) / (float)N;
@@ -57,7 +57,7 @@ void hfi_update_estimate_position(hfi_t *hhfi, float iq, float Ts) {
     hhfi->sdft_fundamental = i_gamma1;
     
     // sign detector (eq 18)
-    float sign_product = i_gamma1 * fast_cos(hhfi->last_phase_h);
+    float sign_product = i_gamma1 * fast_cos(hhfi->phase_h);
     hhfi->sdft_phase = sign_product;
     int8_t p;
     if (sign_product >= 0) {
@@ -121,8 +121,6 @@ void hfi_reset(hfi_t *hhfi) {
     }
     
     // Reset SDFT state
-    hhfi->Xk_real = 0.0f;
-    hhfi->Xk_imag = 0.0f;
-    hhfi->last_Xk.real = 0.0f;
-    hhfi->last_Xk.imag = 0.0f;
+    hhfi->last_Xk_iq.real = 0.0f;
+    hhfi->last_Xk_iq.imag = 0.0f;
 }

@@ -7,6 +7,10 @@
 
 #include "pid_utils.h"
 
+#ifndef TWO_PI
+#define TWO_PI 6.2831853f
+#endif
+
 float pi_control(PID_Controller_t *pi, float error) {
     if (error >= -pi->e_deadband && error <= pi->e_deadband) {
         error = 0.0f;
@@ -73,10 +77,21 @@ float pid_control(PID_Controller_t *pid, float error) {
 
     float p_term = pid->kp * error;
 
+#if 1
     float error_derivative = (error - pid->last_error) / pid->ts;
     pid->d_filtered = (1.0f - pid->d_alpha_filter) * pid->d_filtered + pid->d_alpha_filter * error_derivative;
+    // clamp derivative
+    if (pid->d_filtered > pid->d_max) pid->d_filtered = pid->d_max;
+    else if (pid->d_filtered < -pid->d_max) pid->d_filtered = -pid->d_max;
     float d_term = pid->d_filtered * pid->kd;
-    // float d_term = pid->kd / pid->ts * (error - pid->last_error);
+#else
+    float error_derivative = error - pid->last_error;
+    pid->d_filtered += pid->d_alpha_filter * ((pid->kd * error_derivative / pid->ts) - pid->d_filtered);
+    // clamp derivative
+    if (pid->d_filtered > pid->d_max) pid->d_filtered = pid->d_max;
+    else if (pid->d_filtered < -pid->d_max) pid->d_filtered = -pid->d_max;
+    float d_term = pid->d_filtered;
+#endif
     pid->last_error = error;
 
     float new_integral = pid->integral + error * pid->ki * pid->ts;
@@ -108,13 +123,47 @@ void pid_reset(PID_Controller_t *p) {
     p->last_error = 0.0f;
 }
 
-void pid_init(PID_Controller_t *pid, float kp, float ki, float kd, float Ts, float out_max, float deadband) {
-	pid->kp = kp;
-	pid->ki = ki;
-	pid->kd = kd;
-    pid->ts = Ts;
-    pid->integral = 0.0f;
-    pid->out_max = out_max;
+void pid_set_kp(PID_Controller_t *pid, float kp) {
+    if (kp < 0) return;
+    pid->kp = kp;
+}
+
+void pid_set_ki(PID_Controller_t *pid, float ki) {
+    if (ki < 0) return;
+    pid->ki = ki;
+}
+
+void pid_set_kd(PID_Controller_t *pid, float kd) {
+    if (kd < 0) return;
+    pid->kd = kd;
+}
+
+void pid_set_ts(PID_Controller_t *pid, float ts) {
+    if (ts <= 0) return;
+    pid->ts = ts;
+}
+
+void pid_set_max_out(PID_Controller_t *pid, float max) {
+    if (max <= 0) return;
+    pid->out_max = max;
+}
+
+void pid_set_max_out_dynamic(PID_Controller_t *pid, float max) {
+    if (max <= 0) return;
+    pid->out_max_dynamic = max;
+}
+
+void pid_set_deadband(PID_Controller_t *pid, float deadband) {
     pid->e_deadband = deadband;
-    pid->last_error = 0.0f;
+}
+
+void pid_set_d_filter_fc(PID_Controller_t *pid, float fc) {
+    float tau = 1.0f / (TWO_PI * fc);
+    pid->d_alpha_filter = pid->ts / (tau + pid->ts);
+    if (pid->d_alpha_filter > 1.0f) pid->d_alpha_filter = 1.0f;
+}
+
+void pid_set_max_d(PID_Controller_t *pid, float max) {
+    if (max <= 0) return;
+    pid->d_max = max;
 }
