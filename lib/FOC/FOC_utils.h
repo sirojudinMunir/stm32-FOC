@@ -30,10 +30,6 @@
 
 /* extern variable */
 extern _Bool foc_ready;
-extern float Vd_buff[MAX_I_SAMPLE];
-extern float Vq_buff[MAX_I_SAMPLE];
-extern float Id_buff[MAX_I_SAMPLE];
-extern float Iq_buff[MAX_I_SAMPLE];
 
 #if DEBUG_HFI
 extern float param1_debug_buff[MAX_SAMPLE_BUFF];
@@ -63,10 +59,6 @@ typedef enum {
 	NORMAL_DIR, REVERSE_DIR
 }dir_mode_t;
 
-typedef enum {
-  RS, LD, LQ
-}inject_taregt_t;
-
 // state machine for HFI
 typedef enum {
 	MOTOR_STATE_HFI,
@@ -88,6 +80,7 @@ typedef enum {
 typedef struct {
 	motor_t motor;
 	foc_mode_t foc_mode;
+	motor_mode_t motor_mode;
 
 	uint8_t pole_pairs;
 	float kv;
@@ -96,13 +89,6 @@ typedef struct {
 	float Lq;
 	float max_current;
 	float flux_linkage;
-
-	float meas_inj_freq;
-	float meas_inj_amp;
-	float meas_inj_omega;
-	inject_taregt_t meas_inj_target;
-	int meas_inj_n;
-	_Bool meas_inj_start_flag;
 
 	float m_angle_rad; // mechanical angle
 	float e_angle_rad; // electrical angle
@@ -131,6 +117,7 @@ typedef struct {
 	float Is_ref;
 	float id_ref, iq_ref;
 	float rpm_ref;
+	float pos_ref;
 
     uint8_t loop_count;
 
@@ -144,7 +131,8 @@ typedef struct {
 	float fw_vs;
 	_Bool fw_enable;
 
-	motor_mode_t motor_mode;
+	// MTPA
+	_Bool mtpa_enable;
 
 	float gear_ratio;
 	dir_mode_t sensor_dir;
@@ -183,10 +171,6 @@ void foc_motor_init(foc_t *hfoc, uint8_t pole_pairs, float kv);
 void foc_sensor_init(foc_t *hfoc, float m_rad_offset, dir_mode_t sensor_dir);
 void foc_gear_reducer_init(foc_t *hfoc, float ratio);
 void foc_set_limit_current(foc_t *hfoc, float i_limit);
-void foc_set_mode(foc_t *hfoc, foc_mode_t mode);
-void foc_set_motor_mode(foc_t *hfoc, motor_mode_t mode);
-void foc_disable(foc_t *hfoc);
-void foc_enable(foc_t *hfoc) ;
 void foc_speed_control_update(foc_t *hfoc, float rpm_reference);
 void foc_position_control_update(foc_t *hfoc, float deg_reference);
 float foc_calc_mech_rpm_encoder(foc_t *hfoc, float encd_rpm);
@@ -194,20 +178,43 @@ float foc_calc_mech_pos_encoder(foc_t *hfoc, float encd_deg);
 void foc_sensored_calc_electric_angle(foc_t *hfoc);
 void foc_set_torque_control_bandwidth(foc_t *hfoc, float bandwidth);
 void open_loop_voltage_control(foc_t *hfoc, float vd_ref, float vq_ref, float angle_rad);
-void meas_inj_dq_process(foc_t *hfoc, float ts);
-void estimate_resistance(foc_t *hfoc);
-void estimate_inductance(foc_t *hfoc, float ts);
 
 void foc_sensorless_init(foc_t *hfoc, float sampling_freq);
 void foc_sensorless_polarity_detection(foc_t *hfoc);
 void foc_current_control_update(foc_t *hfoc, float Ts);
 float foc_get_mech_degree(foc_t *hfoc);
 
-void foc_fw_enable(foc_t *hfoc);
-void foc_fw_disable(foc_t *hfoc);
-
 void foc_update(foc_t *hfoc, float Ts);
+
+void foc_set_mode(foc_t *hfoc, foc_mode_t mode);
+foc_mode_t foc_get_mode(foc_t *hfoc);
+void foc_set_motor_mode(foc_t *hfoc, motor_mode_t mode);
+motor_mode_t foc_get_motor_mode(foc_t *hfoc);
+void foc_set_motor_pole_pairs(foc_t *hfoc, uint8_t pole_pairs);
+uint8_t foc_get_motor_pole_pairs(foc_t *hfoc);
+void foc_set_motor_kv(foc_t *hfoc, float kv);
+float foc_get_motor_kv(foc_t *hfoc);
+void foc_set_motor_Rs(foc_t *hfoc, float Rs);
+float foc_get_motor_Rs(foc_t *hfoc);
+void foc_set_motor_Ld(foc_t *hfoc, float Ld);
+float foc_get_motor_Ld(foc_t *hfoc);
+void foc_set_motor_Lq(foc_t *hfoc, float Lq);
+float foc_get_motor_Lq(foc_t *hfoc);
+void foc_set_motor_flux_linkage(foc_t *hfoc, float flux_linkage);
+float foc_get_motor_flux_linkage(foc_t *hfoc);
+
+void foc_disable(foc_t *hfoc);
+void foc_enable(foc_t *hfoc);
+void foc_set_fw_enable(foc_t *hfoc, _Bool enable);
+_Bool foc_get_fw_enable(foc_t *hfoc);
+
+void foc_set_mtpa_enable(foc_t *hfoc, _Bool enable);
+_Bool foc_get_mtpa_enable(foc_t *hfoc);
+
 void foc_set_open_loop_voltage(foc_t *hfoc, float vd, float vq, float e_rad);
+void foc_set_current_set_point(foc_t *hfoc, float Is);
+void foc_set_speed_set_point(foc_t *hfoc, float rpm);
+void foc_set_position_set_point(foc_t *hfoc, float pos_deg);
 void foc_get_idiq(foc_t *hfoc, float *id, float *iq);
 
 #endif /* FOC_INC_FOC_UTILS_H_ */

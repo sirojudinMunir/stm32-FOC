@@ -10,11 +10,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-float Vd_buff[MAX_I_SAMPLE];
-float Vq_buff[MAX_I_SAMPLE];
-float Id_buff[MAX_I_SAMPLE];
-float Iq_buff[MAX_I_SAMPLE];
-
 #if DEBUG_HFI
 float param1_debug_buff[MAX_SAMPLE_BUFF];
 float param2_debug_buff[MAX_SAMPLE_BUFF];
@@ -64,16 +59,7 @@ void foc_set_limit_current(foc_t *hfoc, float i_limit) {
 	hfoc->max_current = i_limit;
 }
 
-void foc_set_mode(foc_t *hfoc, foc_mode_t mode) {
-    hfoc->foc_mode = mode;
-}
-
-void foc_set_motor_mode(foc_t *hfoc, motor_mode_t mode) {
-    hfoc->motor_mode = mode;
-}
-
-void foc_disable(foc_t *hfoc) {
-    hfoc->disable_motor();
+void foc_reset(foc_t *hfoc) {
     pid_reset(&hfoc->id_ctrl);
     pid_reset(&hfoc->iq_ctrl);
     pid_reset(&hfoc->speed_ctrl);
@@ -91,12 +77,24 @@ void foc_disable(foc_t *hfoc) {
         hfoc->pd_v_pulse = 0.0f;
         hfoc->pd_state = P_DET_START;
     }
-    hfoc->motor_mode = MOTOR_MODE_DISABLE;
+    switch(hfoc->motor_mode) {
+        case MOTOR_MODE_TORQUE_CONTROL: {
+            foc_set_current_set_point(hfoc, 0);
+            break;
+        }
+        case MOTOR_MODE_SPEED_CONTROL: {
+            foc_set_speed_set_point(hfoc, 0);
+            break;
+        }
+        case MOTOR_MODE_POSITION_CONTROL: {
+            foc_set_position_set_point(hfoc, hfoc->actual_angle);
+            break;
+        }
+        default:
+            break;
+    }
 }
 
-void foc_enable(foc_t *hfoc) {
-    hfoc->enable_motor();
-}
 
 void foc_speed_control_update(foc_t *hfoc, float rpm_reference) {
 	if (hfoc == NULL || (hfoc->motor_mode != MOTOR_MODE_SPEED_CONTROL && hfoc->motor_mode != MOTOR_MODE_POSITION_CONTROL)) {
@@ -220,140 +218,6 @@ void open_loop_voltage_control(foc_t *hfoc, float vd_ref, float vq_ref, float an
     motor_set_pwm(&hfoc->motor, da, db, dc);
 }
 
-void meas_inj_dq_process(foc_t *hfoc, float ts) {
-    const uint32_t wt = 256; // waiting time
-
-    if (hfoc->meas_inj_start_flag) {
-        float vd = 0.0f, vq = 0.0f;
-        if (hfoc->meas_inj_target == RS) {
-            vd = hfoc->meas_inj_amp;
-            vq = 0.0f;
-        }
-        else {
-            float angle = hfoc->meas_inj_omega * hfoc->meas_inj_n * ts;
-            float v_inj = hfoc->meas_inj_amp * fast_sin(angle);
-            if (hfoc->meas_inj_target == LD) {
-                vd = v_inj;
-                vq = 0.0f;
-            }
-            else if (hfoc->meas_inj_target == LQ) {
-                vd = 0.0f;
-                vq = v_inj;
-            }
-        }
-
-        // float theta_e = hfoc->e_angle_rad_comp;
-        float theta_e = 0.0f;
-
-        open_loop_voltage_control(hfoc, vd, vq, theta_e);
-
-        motor_get_current(&hfoc->motor, &hfoc->ia, &hfoc->ib, &hfoc->ic);
-
-        float sin_theta, cos_theta;
-        float id, iq;
-        pre_calc_sin_cos(theta_e, &sin_theta, &cos_theta);
-        clarke_park_transform(hfoc->ia, hfoc->ib, sin_theta, cos_theta, &id, &iq);
-
-        if (hfoc->meas_inj_n >= wt) {
-            if (hfoc->meas_inj_target == RS || hfoc->meas_inj_target == LD) {
-                Vd_buff[hfoc->meas_inj_n - wt] = vd;
-                Id_buff[hfoc->meas_inj_n - wt] = id;
-            }
-            else if (hfoc->meas_inj_target == LQ) {
-                Vq_buff[hfoc->meas_inj_n - wt] = vq;
-                Iq_buff[hfoc->meas_inj_n - wt] = iq;
-            }
-        }
-
-        hfoc->meas_inj_n++;
-        if (hfoc->meas_inj_n >= (MAX_I_SAMPLE + wt)) {
-            hfoc->meas_inj_n = 0;
-            hfoc->meas_inj_start_flag = 0;
-            open_loop_voltage_control(hfoc, 0, 0, 0);
-        }
-    }
-}
-
-void estimate_resistance(foc_t *hfoc) {
-    float mean_vd = 0, mean_id = 0;
-
-    for (int i = 0; i < MAX_I_SAMPLE; i++) {
-        mean_vd += Vd_buff[i];
-        mean_id += Id_buff[i];
-    }
-    mean_vd /= MAX_I_SAMPLE;
-    mean_id /= MAX_I_SAMPLE;
-
-    hfoc->Rs = mean_vd / mean_id;
-}
-
-void estimate_inductance(foc_t *hfoc, float ts) {
-    float Vc_d = 0, Vs_d = 0, Ic_d = 0, Is_d = 0;
-    float Vc_q = 0, Vs_q = 0, Ic_q = 0, Is_q = 0;
-    float mean_vd = 0, mean_vq = 0, mean_id = 0, mean_iq = 0;
-
-    // Remove DC offset
-    for (int i = 0; i < MAX_I_SAMPLE; i++) {
-        mean_vd += Vd_buff[i];
-        mean_vq += Vq_buff[i];
-        mean_id += Id_buff[i];
-        mean_iq += Iq_buff[i];
-    }
-    mean_vd /= MAX_I_SAMPLE;
-    mean_vq /= MAX_I_SAMPLE;
-    mean_id /= MAX_I_SAMPLE;
-    mean_iq /= MAX_I_SAMPLE;
-
-    // Single-frequency DFT
-    for (int i = 0; i < MAX_I_SAMPLE; i++) {
-        float angle = hfoc->meas_inj_omega * i * ts;
-
-        float vd = Vd_buff[i] - mean_vd;
-        float vq = Vq_buff[i] - mean_vq;
-        float id = Id_buff[i] - mean_id;
-        float iq = Iq_buff[i] - mean_iq;
-
-        Vc_d += vd * fast_cos(angle);
-        Vs_d += vd * fast_sin(angle);
-        Ic_d += id * fast_cos(angle);
-        Is_d += id * fast_sin(angle);
-
-        Vc_q += vq * fast_cos(angle);
-        Vs_q += vq * fast_sin(angle);
-        Ic_q += iq * fast_cos(angle);
-        Is_q += iq * fast_sin(angle);
-    }
-
-    float norm = 2.0f / MAX_I_SAMPLE;
-    Vc_d *= norm; Vs_d *= norm;
-    Ic_d *= norm; Is_d *= norm;
-    Vc_q *= norm; Vs_q *= norm;
-    Ic_q *= norm; Is_q *= norm;
-
-    // V & I amplitude
-    float Vd_mag = sqrtf(Vc_d * Vc_d + Vs_d * Vs_d);
-    float Id_mag = sqrtf(Ic_d * Ic_d + Is_d * Is_d);
-    float Vq_mag = sqrtf(Vc_q * Vc_q + Vs_q * Vs_q);
-    float Iq_mag = sqrtf(Ic_q * Ic_q + Is_q * Is_q);
-
-    // (phi = arctan(Vs/Vc) - arctan(Is/Ic))
-    float phi_d = atan2f(Vs_d, Vc_d) - atan2f(Is_d, Ic_d);
-    float phi_q = atan2f(Vs_q, Vc_q) - atan2f(Is_q, Ic_q);
-
-    // Impedansi & parameters
-    float Zd_mag = Vd_mag / Id_mag;
-    float Zq_mag = Vq_mag / Iq_mag;
-
-    // float Rs_d = Zd_mag * cosf(phi_d);
-    // float Rs_q = Zq_mag * cosf(phi_q);
-    float Ld_est = (Zd_mag * sinf(phi_d)) / hfoc->meas_inj_omega;
-    float Lq_est = (Zq_mag * sinf(phi_q)) / hfoc->meas_inj_omega;
-
-    // hfoc->Rs = (Rs_d + Rs_q) * 0.5;
-    hfoc->Ld = fabs(Ld_est);
-    hfoc->Lq = fabs(Lq_est);
-}
-
 void foc_sensorless_init(foc_t *hfoc, float sampling_freq) {
 
     float Rs = hfoc->Rs;
@@ -436,7 +300,7 @@ void foc_sensorless_polarity_detection(foc_t *hfoc) {
 
 void foc_MTPA(foc_t *hfoc, float Is, float *Id_ref, float *Iq_ref) {
     float L_diff = hfoc->Lq - hfoc->Ld;
-    if (L_diff < 0 || hfoc->Ld <= 0 || hfoc->Lq <= 0) {
+    if (hfoc->mtpa_enable == 0 || L_diff < 0 || hfoc->Ld <= 0 || hfoc->Lq <= 0) {
         *Id_ref = 0.0f;
         *Iq_ref = Is;
         return;
@@ -449,15 +313,6 @@ void foc_MTPA(foc_t *hfoc, float Is, float *Id_ref, float *Iq_ref) {
 
     *Id_ref = id;
     *Iq_ref = iq;
-}
-
-void foc_fw_enable(foc_t *hfoc) {
-    hfoc->fw_enable = 1;
-}
-
-void foc_fw_disable(foc_t *hfoc) {
-    hfoc->fw_enable = 0;
-    pid_reset(&hfoc->fw_ctrl);
 }
 
 void foc_fw_set_vs_ref(foc_t *hfoc, float vs_ref) {
@@ -747,12 +602,121 @@ void foc_update(foc_t *hfoc, float Ts) {
     }
 }
 
+void foc_set_mode(foc_t *hfoc, foc_mode_t mode) {
+    hfoc->foc_mode = mode;
+}
+
+foc_mode_t foc_get_mode(foc_t *hfoc) {
+    return hfoc->foc_mode;
+}
+
+void foc_set_motor_mode(foc_t *hfoc, motor_mode_t mode) {
+    if (hfoc->motor_mode == mode) return;
+    hfoc->motor_mode = mode;
+    foc_reset(hfoc);
+}
+
+motor_mode_t foc_get_motor_mode(foc_t *hfoc) {
+    return hfoc->motor_mode;
+}
+
+void foc_set_motor_pole_pairs(foc_t *hfoc, uint8_t pole_pairs) {
+    hfoc->pole_pairs = pole_pairs;
+}
+
+uint8_t foc_get_motor_pole_pairs(foc_t *hfoc) {
+    return hfoc->pole_pairs;
+}
+
+void foc_set_motor_kv(foc_t *hfoc, float kv) {
+    hfoc->kv = kv;
+}
+
+float foc_get_motor_kv(foc_t *hfoc) {
+    return hfoc->kv;
+}
+
+void foc_set_motor_Rs(foc_t *hfoc, float Rs) {
+    hfoc->Rs = Rs;
+}
+
+float foc_get_motor_Rs(foc_t *hfoc) {
+    return hfoc->Rs;
+}
+
+void foc_set_motor_Ld(foc_t *hfoc, float Ld) {
+    hfoc->Ld = Ld;
+}
+
+float foc_get_motor_Ld(foc_t *hfoc) {
+    return hfoc->Ld;
+}
+
+void foc_set_motor_Lq(foc_t *hfoc, float Lq) {
+    hfoc->Lq = Lq;
+}
+
+float foc_get_motor_Lq(foc_t *hfoc) {
+    return hfoc->Lq;
+}
+
+void foc_set_motor_flux_linkage(foc_t *hfoc, float flux_linkage) {
+    hfoc->flux_linkage = flux_linkage;
+}
+
+float foc_get_motor_flux_linkage(foc_t *hfoc) {
+    return hfoc->flux_linkage;
+}
+
+void foc_disable(foc_t *hfoc) {
+    hfoc->disable_motor();
+    foc_reset(hfoc);
+    hfoc->motor_mode = MOTOR_MODE_DISABLE;
+}
+
+void foc_enable(foc_t *hfoc) {
+    hfoc->enable_motor();
+}
+
+void foc_set_fw_enable(foc_t *hfoc, _Bool enable) {
+    hfoc->fw_enable = enable;
+    if (!enable) {
+        pid_reset(&hfoc->fw_ctrl);
+    }
+}
+
+_Bool foc_get_fw_enable(foc_t *hfoc) {
+    return hfoc->fw_enable;
+}
+
+void foc_set_mtpa_enable(foc_t *hfoc, _Bool enable) {
+    hfoc->mtpa_enable = enable;
+}
+
+_Bool foc_get_mtpa_enable(foc_t *hfoc) {
+    return hfoc->mtpa_enable;
+}
 
 void foc_set_open_loop_voltage(foc_t *hfoc, float vd, float vq, float e_rad) {
     if (hfoc->motor_mode != MOTOR_MODE_VOLTAGE_CONTROL) return;
     hfoc->vd = vd;
     hfoc->vq = vq;
     hfoc->e_rad = e_rad;
+}
+
+void foc_set_current_set_point(foc_t *hfoc, float Is) {
+    if (hfoc->motor_mode != MOTOR_MODE_TORQUE_CONTROL) return;
+    hfoc->Is_ref = Is;
+}
+
+void foc_set_speed_set_point(foc_t *hfoc, float rpm) {
+    if (hfoc->motor_mode != MOTOR_MODE_SPEED_CONTROL) return;
+    hfoc->rpm_ref = rpm;
+}
+
+void foc_set_position_set_point(foc_t *hfoc, float pos_deg) {
+    if (hfoc->motor_mode != MOTOR_MODE_POSITION_CONTROL) return;
+    hfoc->pos_ref = pos_deg;
 }
 
 void foc_get_idiq(foc_t *hfoc, float *id, float *iq) {

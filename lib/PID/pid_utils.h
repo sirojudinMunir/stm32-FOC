@@ -20,6 +20,7 @@ typedef struct {
     float ts;
     float e_deadband;
     float last_error;
+    float d_fc_lpf;
     float d_alpha_filter; // Derivative filter coefficient
     float d_filtered;
     float d_max;
@@ -30,6 +31,7 @@ float pi_control(PID_Controller_t *pi, float error);
 float pd_control(PID_Controller_t *pd, float error);
 float pid_control(PID_Controller_t *pid, float error);
 void pid_reset(PID_Controller_t *p);
+
 void pid_set_kp(PID_Controller_t *pid, float kp);
 void pid_set_ki(PID_Controller_t *pid, float ki);
 void pid_set_kd(PID_Controller_t *pid, float kd);
@@ -38,5 +40,15 @@ void pid_set_out_constraint(PID_Controller_t *pid, float max, float min);
 void pid_set_deadband(PID_Controller_t *pid, float deadband);
 void pid_set_d_filter_fc(PID_Controller_t *pid, float fc);
 void pid_set_max_d(PID_Controller_t *pid, float max);
+
+float pid_get_kp(PID_Controller_t *pid);
+float pid_get_ki(PID_Controller_t *pid);
+float pid_get_kd(PID_Controller_t *pid);
+float pid_get_ts(PID_Controller_t *pid);
+float pid_get_out_max(PID_Controller_t *pid);
+float pid_get_out_min(PID_Controller_t *pid);
+float pid_get_deadband(PID_Controller_t *pid);
+float pid_get_d_filter_fc(PID_Controller_t *pid);
+float pid_get_max_d(PID_Controller_t *pid);
 
 #endif /* PID_INC_PID_UTILS_H_ */

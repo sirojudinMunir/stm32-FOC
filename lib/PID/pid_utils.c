@@ -140,6 +140,7 @@ void pid_set_deadband(PID_Controller_t *pid, float deadband) {
 }
 
 void pid_set_d_filter_fc(PID_Controller_t *pid, float fc) {
+    pid->d_fc_lpf = fc;
     float tau = 1.0f / (TWO_PI * fc);
     pid->d_alpha_filter = pid->ts / (tau + pid->ts);
     if (pid->d_alpha_filter > 1.0f) pid->d_alpha_filter = 1.0f;
@@ -148,4 +149,44 @@ void pid_set_d_filter_fc(PID_Controller_t *pid, float fc) {
 void pid_set_max_d(PID_Controller_t *pid, float max) {
     if (max <= 0) return;
     pid->d_max = max;
+}
+
+float pid_get_kp(PID_Controller_t *pid) {
+    return pid->kp;
+}
+
+float pid_get_ki(PID_Controller_t *pid) {
+    return pid->ki;
+}
+
+float pid_get_kd(PID_Controller_t *pid) {
+    return pid->kd;
+}
+
+float pid_get_ts(PID_Controller_t *pid) {
+    return pid->ts;
+}
+
+float pid_get_out_max(PID_Controller_t *pid) {
+    return pid->out_max;
+}
+
+float pid_get_out_min(PID_Controller_t *pid) {
+    return pid->out_min;
+}
+
+float pid_get_deadband(PID_Controller_t *pid) {
+    return pid->e_deadband;
+}
+
+float pid_get_d_filter_fc(PID_Controller_t *pid) {
+    return pid->d_fc_lpf;
+}
+
+float pid_get_d_alpha_filter(PID_Controller_t *pid) {
+    return pid->d_alpha_filter;
+}
+
+float pid_get_max_d(PID_Controller_t *pid) {
+    return pid->d_max;
 }

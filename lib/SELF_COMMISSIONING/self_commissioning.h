@@ -23,6 +23,7 @@ typedef struct {
     uint32_t signal_t;
     uint32_t signal_start_t;
     _Bool signal_flag;
+    _Bool measure_done_flag;
     foc_t *p_foc;
     float v_buffer[MAX_DATA_ACQ_BUFFER];
     float i_buffer[MAX_DATA_ACQ_BUFFER];
@@ -37,6 +38,7 @@ int sc_start_measure_motor_Ld(self_commissioning_t *sc);
 int sc_start_measure_motor_Lq(self_commissioning_t *sc);
 void sc_update(self_commissioning_t *sc, float Ts);
 _Bool sc_is_measure_done(self_commissioning_t *sc);
+sc_sequence_t sc_get_seq(self_commissioning_t *sc);
 float sc_get_Rs(self_commissioning_t *sc);
 float sc_get_Ld(self_commissioning_t *sc);
 float sc_get_Lq(self_commissioning_t *sc);

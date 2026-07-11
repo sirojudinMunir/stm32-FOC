@@ -27,6 +27,8 @@
 #include "AS5047P.h"
 #include "FOC_utils.h"
 #include "self_commissioning.h"
+#include "storage.h"
+#include "com.h"
 #include "string.h"
 /* USER CODE END Includes */
 
@@ -68,10 +70,10 @@ TIM_HandleTypeDef htim1;
 AS5047P_t hencd1;
 uint32_t adc_buff[4];
 foc_t hfoc1;
-self_commissioning_t hsc;
+self_commissioning_t hsc1;
+storage_t hstorage1;
+com_t husb_com;
 
-uint8_t *p_usb_data_rx;
-_Bool usb_recv_flag = 0;
 char usb_send_buff[128];
 
 /* USER CODE END PV */
@@ -128,6 +130,61 @@ void motor1_as5047p_spi_cs(_Bool cs_state) {
   else SPI_CS_GPIO_Port->BSRR = SPI_CS_Pin<<16;
 }
 
+
+#define FLASH_SECTOR_ADDR  ((uint32_t)0x080E0000)
+#define FLASH_SECTOR_NUM   FLASH_SECTOR_11
+
+int write_flash(void *data, uint32_t len) {
+  HAL_StatusTypeDef status;
+  FLASH_EraseInitTypeDef EraseInitStruct;
+  uint32_t SectorError = 0;
+  
+  HAL_FLASH_Unlock();
+
+  EraseInitStruct.TypeErase    = FLASH_TYPEERASE_SECTORS;
+  EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+  EraseInitStruct.Sector       = FLASH_SECTOR_NUM;
+  EraseInitStruct.NbSectors    = 1;
+
+  status = HAL_FLASHEx_Erase(&EraseInitStruct, &SectorError);
+  if (status != HAL_OK) {
+    HAL_FLASH_Lock();
+    return -1;
+  }
+
+  uint32_t address = FLASH_SECTOR_ADDR;
+  uint8_t *src = (uint8_t *)data;
+
+  for (uint32_t i = 0; i < len; i += 4) {
+    uint32_t word = *(uint32_t*)(src + i);
+    status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, address, word);
+    if (status != HAL_OK) {
+      HAL_FLASH_Lock();
+      return -1;
+    }
+    address += 4;
+  }
+
+  HAL_FLASH_Lock();
+  return 0;
+}
+
+int read_flash(void *data, uint32_t len) {
+  memcpy(data, (void*)FLASH_SECTOR_ADDR, len);
+  return 0;
+}
+
+int usb_recv_data(uint8_t *data, uint16_t len) {
+  (void)data;
+  (void)len;
+  return 0;
+}
+
+int usb_send_data(uint8_t *data, uint16_t len) {
+  if (CDC_Transmit_FS(data, len) != USBD_OK) return -1;
+  return 0;
+}
+
 /**************************************************************************** */
 
 static void init_motor(void) {
@@ -146,22 +203,28 @@ static void init_foc(void) {
   link_set_pwm_freq(&htim1, BLDC_PWM_FREQ);
   init_motor();
   init_encoder();
-  sc_init(&hsc, &hfoc1);
+  sc_init(&hsc1, &hfoc1);
 
+  storage_init(&hstorage1, write_flash, read_flash);
   foc_inverter_init(&hfoc1, motor1_inverter_enable, motor1_inverter_disable, motor1_get_pwm_res);
   foc_feedback_sensor_init(&hfoc1, motor1_as5047p_get_mech_deg, motor1_as5047p_get_rpm);
+  com_init(&husb_com, usb_recv_data, usb_send_data, &hfoc1, &hstorage1, &hsc1);
+
+  storage_read_config(&hstorage1);
+  storage_copy_to_local(&hstorage1, &hfoc1);
+
   // Id PI parameter
   pid_reset(&hfoc1.id_ctrl);
   pid_set_ts(&hfoc1.id_ctrl, FOC_TS);
-  pid_set_kp(&hfoc1.id_ctrl, 0.02f);
-  pid_set_ki(&hfoc1.id_ctrl, 12.0f);
-  pid_set_deadband(&hfoc1.id_ctrl, 0.0f);
+  // pid_set_kp(&hfoc1.id_ctrl, 0.02f);
+  // pid_set_ki(&hfoc1.id_ctrl, 12.0f);
+  // pid_set_deadband(&hfoc1.id_ctrl, 0.0f);
   // Id PI parameter
   pid_reset(&hfoc1.iq_ctrl);
   pid_set_ts(&hfoc1.iq_ctrl, FOC_TS);
-  pid_set_kp(&hfoc1.iq_ctrl, 0.02f);
-  pid_set_ki(&hfoc1.iq_ctrl, 12.0f);
-  pid_set_deadband(&hfoc1.iq_ctrl, 0.0f);
+  // pid_set_kp(&hfoc1.iq_ctrl, 0.02f);
+  // pid_set_ki(&hfoc1.iq_ctrl, 12.0f);
+  // pid_set_deadband(&hfoc1.iq_ctrl, 0.0f);
   
   foc_motor_init(&hfoc1, POLE_PAIR, 360.0f);
 
@@ -190,57 +253,18 @@ static void indicator_update(void) {
   }
 }
 
-int self_com_flag = 0;
-
-static void test_com_update(void) {
-  if (usb_recv_flag) {
-    usb_recv_flag = 0;
-    if (strstr((char*)p_usb_data_rx, "cal")) {
-      self_com_flag = 1;
-    }
-  }
-  switch (self_com_flag) {
-    case 1: {
-      usb_print("start read Rs\r\n");
-      sc_start_measure_motor_resistance(&hsc);
-      self_com_flag = 2;
-      break;
-    }
-    case 2: {
-      if (sc_is_measure_done(&hsc)) {
-        float Rs = sc_get_Rs(&hsc);
-        usb_print("Rs: %f\r\n", Rs);
-        self_com_flag = 3;
-      }
-      break;
-    }
-    case 3: {
-      usb_print("start read Ld\r\n");
-      sc_start_measure_motor_Ld(&hsc);
-      self_com_flag = 4;
-      break;
-    }
-    case 4: {
-      if (sc_is_measure_done(&hsc)) {
-        float Ld = sc_get_Ld(&hsc);
-        usb_print("Ld: %f\r\n", Ld);
-        self_com_flag = 5;
-      }
-      break;
-    }
-    case 5: {
-      usb_print("start read Lq\r\n");
-      sc_start_measure_motor_Lq(&hsc);
-      self_com_flag = 6;
-      break;
-    }
-    case 6: {
-      if (sc_is_measure_done(&hsc)) {
-        float Lq = sc_get_Lq(&hsc);
-        usb_print("Lq: %f\r\n", Lq);
-        self_com_flag = 0;
-      }
-      break;
+static void self_commissioning_update(void) {
+  if (sc_is_measure_done(&hsc1)) {
+    switch(sc_get_seq(&hsc1)) {
+      case SC_SEQUENCE_START_MEASURE_RS:
+        foc_set_motor_Rs(&hfoc1, sc_get_Rs(&hsc1));
+        break;
+      case SC_SEQUENCE_START_MEASURE_LD:
+        foc_set_motor_Ld(&hfoc1, sc_get_Ld(&hsc1));
+        break;
+      case SC_SEQUENCE_START_MEASURE_LQ:
+        foc_set_motor_Lq(&hfoc1, sc_get_Lq(&hsc1));
+        break;
     }
   }
 }
@@ -259,7 +283,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc) {
     adc_buff[1] = ADC1->JDR2;
     adc_buff[2] = ADC1->JDR3;
     foc_sensored_calc_electric_angle(&hfoc1);
-    sc_update(&hsc, FOC_TS);
+    sc_update(&hsc1, FOC_TS);
     foc_update(&hfoc1, FOC_TS);
   }
 }
@@ -327,7 +351,9 @@ int main(void)
   {
     indicator_update();
     AS5047P_update(&hencd1);
-    test_com_update();
+    com_update(&husb_com);
+    self_commissioning_update();
+    // test_com_update();
     // if (HAL_GetTick() - iq_tick >= 1000) {
     //   iq_tick = HAL_GetTick();
     //   if (hfoc1.Is_ref > 0) hfoc1.Is_ref = -0.5f;

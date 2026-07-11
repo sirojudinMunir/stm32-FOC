@@ -150,6 +150,7 @@ void sc_update(self_commissioning_t *sc, float Ts) {
         }
         foc_set_open_loop_voltage(sc->p_foc, 0, 0, 0);
         sc->signal_flag = 0;
+        sc->measure_done_flag = 1;
         return;
     }
 
@@ -189,7 +190,15 @@ void sc_update(self_commissioning_t *sc, float Ts) {
 }
 
 _Bool sc_is_measure_done(self_commissioning_t *sc) {
-    return !sc->signal_flag;
+    if (sc->measure_done_flag) {
+        sc->measure_done_flag = 0;
+        return 1;
+    }
+    return 0;
+}
+
+sc_sequence_t sc_get_seq(self_commissioning_t *sc) {
+    return sc->seq;
 }
 
 float sc_get_Rs(self_commissioning_t *sc) {
