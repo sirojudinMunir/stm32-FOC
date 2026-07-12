@@ -1,6 +1,6 @@
 from motor_protocol import MotorProtocol
 
-motor = MotorProtocol(port="COM4", baudrate=115200, timeout=2)
+motor = MotorProtocol(port="COM3", baudrate=115200, timeout=2)
 
 def get_motor_param():
     pole_pairs = motor.get_pole_pairs()

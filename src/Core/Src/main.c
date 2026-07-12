@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stm32f405_link.h"
+#include "CAN.h"
 #include "motor.h"
 #include "AS5047P.h"
 #include "FOC_utils.h"
@@ -39,6 +40,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
 
 #define POLE_PAIR	(7)
 #define ENCODER_OFFSET_RAD (DEG_TO_RAD(297.242249f))
@@ -59,6 +61,8 @@ extern uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 
+CAN_HandleTypeDef hcan1;
+
 SPI_HandleTypeDef hspi1;
 DMA_HandleTypeDef hdma_spi1_tx;
 DMA_HandleTypeDef hdma_spi1_rx;
@@ -73,6 +77,7 @@ foc_t hfoc1;
 self_commissioning_t hsc1;
 storage_t hstorage1;
 com_t husb_com;
+com_t hcan_com;
 
 char usb_send_buff[128];
 
@@ -85,6 +90,7 @@ static void MX_DMA_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_CAN1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -185,6 +191,21 @@ int usb_send_data(uint8_t *data, uint16_t len) {
   return 0;
 }
 
+int can_recv_data(uint8_t *data, uint16_t len) {
+  (void)data;
+  (void)len;
+  return 0;
+}
+
+int can_send_data(uint8_t *data, uint16_t len) {
+#if USB_TO_CAN
+  CAN_Send(&hcan1, 0x05, data, len);
+#else
+  CAN_Send(&hcan1, TRANSMITTER_ID, data, len);
+#endif
+  return 0;
+}
+
 /**************************************************************************** */
 
 static void init_motor(void) {
@@ -199,6 +220,11 @@ static void init_encoder(void) {
 }
 
 static void init_foc(void) {
+  CAN_init(&hcan1);
+#if USB_TO_CAN
+  com_init(&husb_com, usb_recv_data, usb_send_data, &hfoc1, &hstorage1, &hsc1);
+  com_init(&hcan_com, can_recv_data, can_send_data, &hfoc1, &hstorage1, &hsc1);
+#else
   init_trig_lut();
   link_set_pwm_freq(&htim1, BLDC_PWM_FREQ);
   init_motor();
@@ -209,6 +235,7 @@ static void init_foc(void) {
   foc_inverter_init(&hfoc1, motor1_inverter_enable, motor1_inverter_disable, motor1_get_pwm_res);
   foc_feedback_sensor_init(&hfoc1, motor1_as5047p_get_mech_deg, motor1_as5047p_get_rpm);
   com_init(&husb_com, usb_recv_data, usb_send_data, &hfoc1, &hstorage1, &hsc1);
+  com_init(&hcan_com, can_recv_data, can_send_data, &hfoc1, &hstorage1, &hsc1);
 
   storage_read_config(&hstorage1);
   storage_copy_to_local(&hstorage1, &hfoc1);
@@ -228,19 +255,21 @@ static void init_foc(void) {
   
   foc_motor_init(&hfoc1, POLE_PAIR, 360.0f);
 
+  foc_set_mode(&hfoc1, FOC_MODE_SENSORED);
+  foc_sensorless_init(&hfoc1, BLDC_PWM_FREQ);
+
   foc_sensor_init(&hfoc1, ENCODER_OFFSET_RAD, NORMAL_DIR);
   foc_gear_reducer_init(&hfoc1, 1.0f);
   foc_set_limit_current(&hfoc1, 1.0f);
 
-  foc_set_mode(&hfoc1, FOC_MODE_SENSORED);
-
   hfoc1.v_bus = 12.0f; 
 
   foc_enable(&hfoc1);
+#endif
 }
 
 static void indicator_update(void) {
-  uint32_t heartbeat_tick = 0;
+  static uint32_t heartbeat_tick = 0;
   if (HAL_GetTick() - heartbeat_tick >= 500) {
     heartbeat_tick = HAL_GetTick();
     HAL_GPIO_TogglePin(LED_G_GPIO_Port, LED_G_Pin);
@@ -269,6 +298,17 @@ static void self_commissioning_update(void) {
   }
 }
 
+void usb_to_can_update(void) {
+  if (husb_com.incomming_data_flag) {
+    husb_com.incomming_data_flag = 0;
+    hcan_com.send_data(husb_com.data_rx, husb_com.data_rx_len);
+  }
+  if (hcan_com.incomming_data_flag) {
+    hcan_com.incomming_data_flag = 0;
+    husb_com.send_data(hcan_com.data_rx, hcan_com.data_rx_len);
+  }
+}
+
 /**************************************************************************** */
 
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
@@ -285,6 +325,18 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc) {
     foc_sensored_calc_electric_angle(&hfoc1);
     sc_update(&hsc1, FOC_TS);
     foc_update(&hfoc1, FOC_TS);
+  }
+}
+
+// CAN RX FIFO 0 Callback
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
+  CAN_RxHeaderTypeDef RxHeader;
+  uint8_t RxData[32];
+  if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
+    hcan_com.data_rx = RxData;
+    hcan_com.data_rx_len = RxHeader.DLC;
+    hcan_com.incomming_data_flag = 1;
+    // usb_print("(%ld) %d %d %d %d\r\n", hcan_com.data_rx_len, RxData[0], RxData[1], RxData[2], RxData[3]);
   }
 }
 
@@ -326,6 +378,7 @@ int main(void)
   MX_TIM1_Init();
   MX_ADC1_Init();
   MX_SPI1_Init();
+  MX_CAN1_Init();
   /* USER CODE BEGIN 2 */
 
 #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
@@ -338,11 +391,6 @@ int main(void)
 
   uint32_t com_tick = HAL_GetTick();
 
-  // test
-  uint32_t iq_tick = HAL_GetTick();
-  hfoc1.Is_ref = 0;
-
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -350,28 +398,31 @@ int main(void)
   while (1)
   {
     indicator_update();
+#if USB_TO_CAN
+    usb_to_can_update();
+#else
     AS5047P_update(&hencd1);
     com_update(&husb_com);
+    com_update(&hcan_com);
     self_commissioning_update();
-    // test_com_update();
-    // if (HAL_GetTick() - iq_tick >= 1000) {
-    //   iq_tick = HAL_GetTick();
-    //   if (hfoc1.Is_ref > 0) hfoc1.Is_ref = -0.5f;
-    //   else hfoc1.Is_ref = 0.5f;
-    // }
-    // if (HAL_GetTick() - com_tick >= 10) {
-    //   com_tick = HAL_GetTick();
-    //   uint8_t usb_tx_buff[128];
-    //   uint16_t ln = snprintf((char *)usb_tx_buff, sizeof(usb_tx_buff), 
-    //                         "%f %ld %ld %ld %f %f %f\r\n", 
-    //                         hfoc1.e_rad, 
-    //                         TIM1->CCR1, TIM1->CCR2, TIM1->CCR3, 
-    //                         hfoc1.motor.ia, hfoc1.motor.ib, hfoc1.motor.ic);
-    //   // uint16_t ln = snprintf((char *)usb_tx_buff, sizeof(usb_tx_buff), 
-    //   //                       "%f\r\n", 
-    //   //                       hfoc1.e_rad);
-    //   CDC_Transmit_FS(usb_tx_buff, ln);
-    // }
+#endif
+    if (HAL_GetTick() - com_tick >= 200) {
+      com_tick = HAL_GetTick();
+      // uint8_t tx_buff[2] = {
+      //   0xAA, 0x55
+      // };
+      // CAN_Send(&hcan1, 0x02, tx_buff, 2);
+      // uint8_t usb_tx_buff[128];
+      // uint16_t ln = snprintf((char *)usb_tx_buff, sizeof(usb_tx_buff), 
+      //                       "%f %ld %ld %ld %f %f %f\r\n", 
+      //                       hfoc1.e_rad, 
+      //                       TIM1->CCR1, TIM1->CCR2, TIM1->CCR3, 
+      //                       hfoc1.motor.ia, hfoc1.motor.ib, hfoc1.motor.ic);
+      // // uint16_t ln = snprintf((char *)usb_tx_buff, sizeof(usb_tx_buff), 
+      // //                       "%f\r\n", 
+      // //                       hfoc1.e_rad);
+      // CDC_Transmit_FS(usb_tx_buff, ln);
+    }
 
 
     /* USER CODE END WHILE */
@@ -511,6 +562,43 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief CAN1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN1_Init(void)
+{
+
+  /* USER CODE BEGIN CAN1_Init 0 */
+
+  /* USER CODE END CAN1_Init 0 */
+
+  /* USER CODE BEGIN CAN1_Init 1 */
+
+  /* USER CODE END CAN1_Init 1 */
+  hcan1.Instance = CAN1;
+  hcan1.Init.Prescaler = 6;
+  hcan1.Init.Mode = CAN_MODE_NORMAL;
+  hcan1.Init.SyncJumpWidth = CAN_SJW_2TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_8TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_5TQ;
+  hcan1.Init.TimeTriggeredMode = DISABLE;
+  hcan1.Init.AutoBusOff = DISABLE;
+  hcan1.Init.AutoWakeUp = DISABLE;
+  hcan1.Init.AutoRetransmission = ENABLE;
+  hcan1.Init.ReceiveFifoLocked = DISABLE;
+  hcan1.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN1_Init 2 */
+
+  /* USER CODE END CAN1_Init 2 */
 
 }
 

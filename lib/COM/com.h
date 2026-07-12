@@ -1,6 +1,8 @@
 #ifndef COM_H
 #define COM_H
 
+#define USB_TO_CAN  (0)
+
 #include <stdint.h>
 #include "string.h"
 #include "motor.h"

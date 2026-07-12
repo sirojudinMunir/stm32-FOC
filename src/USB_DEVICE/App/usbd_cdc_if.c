@@ -111,6 +111,7 @@ extern USBD_HandleTypeDef hUsbDeviceFS;
 /* USER CODE BEGIN EXPORTED_VARIABLES */
 extern uint8_t *p_usb_data_rx;
 extern com_t husb_com;
+extern com_t hcan_com;
 /* USER CODE END EXPORTED_VARIABLES */
 
 /**
