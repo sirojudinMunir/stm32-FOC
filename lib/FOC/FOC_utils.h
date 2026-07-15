@@ -119,7 +119,8 @@ typedef struct {
 	float rpm_ref;
 	float pos_ref;
 
-    uint8_t loop_count;
+	uint8_t speed_control_loop_count;
+	uint8_t position_control_loop_count;
 
 	PID_Controller_t id_ctrl, iq_ctrl;
 	PID_Controller_t speed_ctrl;
@@ -162,19 +163,15 @@ typedef struct {
 	void (*disable_motor)(void);
 	uint32_t (*get_pwm_res)(void);
 	float (*get_mech_degre)(void);
-	float (*get_mech_rpm)(float);
+	float (*get_mech_rpm)(void);
 }foc_t;
 
 void foc_inverter_init(foc_t *hfoc, void (*enable_motor)(void), void (*disable_motor)(void), uint32_t (*get_pwm_res)(void));
-void foc_feedback_sensor_init(foc_t *hfoc, float (*get_mech_degre)(void), float (*get_mech_rpm)(float));
+void foc_feedback_sensor_init(foc_t *hfoc, float (*get_mech_degre)(void), float (*get_mech_rpm)(void));
 void foc_motor_init(foc_t *hfoc, uint8_t pole_pairs, float kv);
 void foc_sensor_init(foc_t *hfoc, float m_rad_offset, dir_mode_t sensor_dir);
 void foc_gear_reducer_init(foc_t *hfoc, float ratio);
 void foc_set_limit_current(foc_t *hfoc, float i_limit);
-void foc_speed_control_update(foc_t *hfoc, float rpm_reference);
-void foc_position_control_update(foc_t *hfoc, float deg_reference);
-float foc_calc_mech_rpm_encoder(foc_t *hfoc, float encd_rpm);
-float foc_calc_mech_pos_encoder(foc_t *hfoc, float encd_deg);
 void foc_sensored_calc_electric_angle(foc_t *hfoc);
 void foc_set_torque_control_bandwidth(foc_t *hfoc, float bandwidth);
 void open_loop_voltage_control(foc_t *hfoc, float vd_ref, float vq_ref, float angle_rad);
@@ -185,6 +182,8 @@ void foc_current_control_update(foc_t *hfoc, float Ts);
 float foc_get_mech_degree(foc_t *hfoc);
 
 void foc_update(foc_t *hfoc, float Ts);
+void foc_speed_control_update(foc_t *hfoc, float Ts);
+void foc_position_control_update(foc_t *hfoc, float Ts);
 
 void foc_set_mode(foc_t *hfoc, foc_mode_t mode);
 foc_mode_t foc_get_mode(foc_t *hfoc);

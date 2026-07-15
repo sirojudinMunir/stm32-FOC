@@ -228,6 +228,26 @@ class MotorProtocol:
     def set_foc_current_set_point(self, value):
         data = bytes([41]) + struct.pack('<f', value)
         return self.send_data(data)
+    
+    def get_foc_current_set_point(self):
+        data = bytes([42])
+        return self.recv_float_data(data, 1)
+
+    def set_foc_speed_set_point(self, value):
+        data = bytes([43]) + struct.pack('<f', value)
+        return self.send_data(data)
+    
+    def get_foc_speed_set_point(self):
+        data = bytes([44])
+        return self.recv_float_data(data, 1)
+
+    def set_foc_position_set_point(self, value):
+        data = bytes([45]) + struct.pack('<f', value)
+        return self.send_data(data)
+    
+    def get_foc_position_set_point(self):
+        data = bytes([46])
+        return self.recv_float_data(data, 1)
 
 
     def start_measure_motor_Rs(self):

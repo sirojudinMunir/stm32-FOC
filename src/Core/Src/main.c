@@ -121,9 +121,8 @@ float motor1_as5047p_get_mech_deg(void) {
   return AS5047P_get_degree(&hencd1);
 }
 
-float motor1_as5047p_get_rpm(float mech_deg) {
-  (void)mech_deg;
-  return 0.0f;
+float motor1_as5047p_get_rpm(void) {
+  return AS5047P_get_rpm(&hencd1, FOC_TS);
 }
 
 int motor1_as5047p_spi_transmit(uint8_t *tx, uint8_t *rx, uint16_t len) {
@@ -255,7 +254,7 @@ static void init_foc(void) {
   
   foc_motor_init(&hfoc1, POLE_PAIR, 360.0f);
 
-  foc_set_mode(&hfoc1, FOC_MODE_SENSORED);
+  // foc_set_mode(&hfoc1, FOC_MODE_SENSORED);
   foc_sensorless_init(&hfoc1, BLDC_PWM_FREQ);
 
   foc_sensor_init(&hfoc1, ENCODER_OFFSET_RAD, NORMAL_DIR);
@@ -322,7 +321,6 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc) {
     adc_buff[0] = ADC1->JDR1;
     adc_buff[1] = ADC1->JDR2;
     adc_buff[2] = ADC1->JDR3;
-    foc_sensored_calc_electric_angle(&hfoc1);
     sc_update(&hsc1, FOC_TS);
     foc_update(&hfoc1, FOC_TS);
   }
@@ -406,7 +404,7 @@ int main(void)
     com_update(&hcan_com);
     self_commissioning_update();
 #endif
-    if (HAL_GetTick() - com_tick >= 200) {
+    if (HAL_GetTick() - com_tick >= 10) {
       com_tick = HAL_GetTick();
       // uint8_t tx_buff[2] = {
       //   0xAA, 0x55
@@ -418,9 +416,9 @@ int main(void)
       //                       hfoc1.e_rad, 
       //                       TIM1->CCR1, TIM1->CCR2, TIM1->CCR3, 
       //                       hfoc1.motor.ia, hfoc1.motor.ib, hfoc1.motor.ic);
-      // // uint16_t ln = snprintf((char *)usb_tx_buff, sizeof(usb_tx_buff), 
-      // //                       "%f\r\n", 
-      // //                       hfoc1.e_rad);
+      // uint16_t ln = snprintf((char *)usb_tx_buff, sizeof(usb_tx_buff), 
+      //                       "%f %f %f\r\n", 
+      //                       hfoc1.e_rad, hfoc1.actual_angle, hfoc1.actual_rpm);
       // CDC_Transmit_FS(usb_tx_buff, ln);
     }
 

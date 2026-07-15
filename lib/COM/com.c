@@ -83,7 +83,7 @@ float com_recv_float32(uint8_t *data_rx) {
 
 /****************************************************************************** */
 
-int8_t com_set_value(com_t *com, void *var, uint32_t var_len) {
+int8_t com_receive_value(com_t *com, void *var, uint32_t var_len) {
     int8_t ret_val = 0;
     if (com->data_rx_len == sizeof(uint8_t) + var_len) {
         memcpy(var, &com->data_rx[1], var_len);
@@ -91,7 +91,7 @@ int8_t com_set_value(com_t *com, void *var, uint32_t var_len) {
     else {
         ret_val = -1;
     }
-    com_send_int8(com, &ret_val, 1);
+    // com_send_int8(com, &ret_val, 1);
     return ret_val;
 }
 
@@ -120,7 +120,7 @@ int8_t com_save_config(com_t *com) {
 
 int8_t com_set_foc_mode(com_t *com) {
     uint8_t mode;
-    int8_t ret_val = com_set_value(com, &mode, sizeof(uint8_t));
+    int8_t ret_val = com_receive_value(com, &mode, sizeof(uint8_t));
     if (ret_val == 0) {
         foc_set_mode(com->pfoc, (foc_mode_t)mode);
     }
@@ -136,7 +136,7 @@ int8_t com_get_foc_mode(com_t *com) {
 
 int8_t com_set_foc_motor_mode(com_t *com) {
     uint8_t mode;
-    int8_t ret_val = com_set_value(com, &mode, sizeof(uint8_t));
+    int8_t ret_val = com_receive_value(com, &mode, sizeof(uint8_t));
     if (ret_val == 0) {
         foc_set_motor_mode(com->pfoc, (motor_mode_t)mode);
     }
@@ -154,7 +154,7 @@ int8_t com_get_foc_motor_mode(com_t *com) {
 
 int8_t com_set_pole_pairs(com_t *com) {
     uint8_t pole_pairs;
-    int8_t ret_val = com_set_value(com, &pole_pairs, sizeof(uint8_t));
+    int8_t ret_val = com_receive_value(com, &pole_pairs, sizeof(uint8_t));
     if (ret_val == 0) {
         foc_set_motor_pole_pairs(com->pfoc, pole_pairs);
     }
@@ -170,7 +170,7 @@ int8_t com_get_pole_pairs(com_t *com) {
 
 int8_t com_set_kv(com_t *com) {
     float kv;
-    int8_t ret_val = com_set_value(com, &kv, sizeof(float));
+    int8_t ret_val = com_receive_value(com, &kv, sizeof(float));
     if (ret_val == 0) {
         foc_set_motor_kv(com->pfoc, kv);
     }
@@ -186,7 +186,7 @@ int8_t com_get_kv(com_t *com) {
 
 int8_t com_set_Rs(com_t *com) {
     float Rs;
-    int8_t ret_val = com_set_value(com, &Rs, sizeof(float));
+    int8_t ret_val = com_receive_value(com, &Rs, sizeof(float));
     if (ret_val == 0) {
         foc_set_motor_Rs(com->pfoc, Rs);
     }
@@ -202,7 +202,7 @@ int8_t com_get_Rs(com_t *com) {
 
 int8_t com_set_Ld(com_t *com) {
     float Ld;
-    int8_t ret_val = com_set_value(com, &Ld, sizeof(float));
+    int8_t ret_val = com_receive_value(com, &Ld, sizeof(float));
     if (ret_val == 0) {
         foc_set_motor_Ld(com->pfoc, Ld);
     }
@@ -218,7 +218,7 @@ int8_t com_get_Ld(com_t *com) {
 
 int8_t com_set_Lq(com_t *com) {
     float Lq;
-    int8_t ret_val = com_set_value(com, &Lq, sizeof(float));
+    int8_t ret_val = com_receive_value(com, &Lq, sizeof(float));
     if (ret_val == 0) {
         foc_set_motor_Lq(com->pfoc, Lq);
     }
@@ -234,7 +234,7 @@ int8_t com_get_Lq(com_t *com) {
 
 int8_t com_set_flux_linkage(com_t *com) {
     float flux_linkage;
-    int8_t ret_val = com_set_value(com, &flux_linkage, sizeof(float));
+    int8_t ret_val = com_receive_value(com, &flux_linkage, sizeof(float));
     if (ret_val == 0) {
         foc_set_motor_flux_linkage(com->pfoc, flux_linkage);
     }
@@ -252,7 +252,7 @@ int8_t com_get_flux_linkage(com_t *com) {
 
 int8_t com_set_foc_pid_id(com_t *com) {
     float values[3];
-    int8_t ret_val = com_set_value(com, values, sizeof(values));
+    int8_t ret_val = com_receive_value(com, values, sizeof(values));
     if (ret_val == 0) {
         pid_set_kp(&com->pfoc->id_ctrl, values[0]);
         pid_set_ki(&com->pfoc->id_ctrl, values[1]);
@@ -273,7 +273,7 @@ int8_t com_get_foc_pid_id(com_t *com) {
 
 int8_t com_set_foc_pid_iq(com_t *com) {
     float values[3];
-    int8_t ret_val = com_set_value(com, values, sizeof(values));
+    int8_t ret_val = com_receive_value(com, values, sizeof(values));
     if (ret_val == 0) {
         pid_set_kp(&com->pfoc->iq_ctrl, values[0]);
         pid_set_ki(&com->pfoc->iq_ctrl, values[1]);
@@ -296,7 +296,7 @@ int8_t com_get_foc_pid_iq(com_t *com) {
 
 int8_t com_set_foc_pid_speed(com_t *com) {
     float values[4];
-    int8_t ret_val = com_set_value(com, values, sizeof(values));
+    int8_t ret_val = com_receive_value(com, values, sizeof(values));
     if (ret_val == 0) {
         pid_set_kp(&com->pfoc->speed_ctrl, values[0]);
         pid_set_ki(&com->pfoc->speed_ctrl, values[1]);
@@ -319,7 +319,7 @@ int8_t com_get_foc_pid_speed(com_t *com) {
 
 int8_t com_set_foc_pid_position(com_t *com) {
     float values[6];
-    int8_t ret_val = com_set_value(com, values, sizeof(values));
+    int8_t ret_val = com_receive_value(com, values, sizeof(values));
     if (ret_val == 0) {
         pid_set_kp(&com->pfoc->pos_ctrl, values[0]);
         pid_set_ki(&com->pfoc->pos_ctrl, values[1]);
@@ -348,7 +348,7 @@ int8_t com_get_foc_pid_position(com_t *com) {
 
 int8_t com_set_field_weakening_config(com_t *com) {
     float values[3];
-    int8_t ret_val = com_set_value(com, values, sizeof(values));
+    int8_t ret_val = com_receive_value(com, values, sizeof(values));
     if (ret_val == 0) {
         pid_set_kp(&com->pfoc->fw_ctrl, values[0]);
         pid_set_ki(&com->pfoc->fw_ctrl, values[1]);
@@ -369,7 +369,7 @@ int8_t com_get_field_weakening_config(com_t *com) {
 
 int8_t com_set_field_weakening_enable(com_t *com) {
     uint8_t enable;
-    int8_t ret_val = com_set_value(com, &enable, sizeof(enable));
+    int8_t ret_val = com_receive_value(com, &enable, sizeof(enable));
     if (ret_val == 0) {
         foc_set_fw_enable(com->pfoc, (_Bool)enable);
     }
@@ -387,7 +387,7 @@ int8_t com_get_field_weakening_enable(com_t *com) {
 
 int8_t com_set_mtpa_enable(com_t *com) {
     uint8_t enable;
-    int8_t ret_val = com_set_value(com, &enable, sizeof(enable));
+    int8_t ret_val = com_receive_value(com, &enable, sizeof(enable));
     if (ret_val == 0) {
         foc_set_mtpa_enable(com->pfoc, (_Bool)enable);
     }
@@ -405,7 +405,7 @@ int8_t com_get_mtpa_enable(com_t *com) {
 
 int8_t com_foc_set_current_set_point(com_t *com) {
     float Is;
-    int8_t ret_val = com_set_value(com, &Is, sizeof(Is));
+    int8_t ret_val = com_receive_value(com, &Is, sizeof(Is));
     if (ret_val == 0) {
         if (Is > 1.0f) Is = 1.0f;
         else if (Is < -1.0f) Is = -1.0f;
@@ -416,22 +416,40 @@ int8_t com_foc_set_current_set_point(com_t *com) {
 }
 
 int8_t com_foc_get_current_set_point(com_t *com) {
+    float set_point = com->pfoc->Is_ref;
+    com_send_float32(com, &set_point, 1);
     return 0;
 }
 
 int8_t com_foc_set_speed_set_point(com_t *com) {
+    float rpm;
+    int8_t ret_val = com_receive_value(com, &rpm, sizeof(rpm));
+    if (ret_val == 0) {
+        foc_set_speed_set_point(com->pfoc, rpm);
+    }
+    com_send_int8(com, &ret_val, 1);
     return 0;
 }
 
 int8_t com_foc_get_speed_set_point(com_t *com) {
+    float set_point = com->pfoc->rpm_ref;
+    com_send_float32(com, &set_point, 1);
     return 0;
 }
 
 int8_t com_foc_set_position_set_point(com_t *com) {
+    float deg;
+    int8_t ret_val = com_receive_value(com, &deg, sizeof(deg));
+    if (ret_val == 0) {
+        foc_set_position_set_point(com->pfoc, deg);
+    }
+    com_send_int8(com, &ret_val, 1);
     return 0;
 }
 
 int8_t com_foc_get_position_set_point(com_t *com) {
+    float set_point = com->pfoc->pos_ref;
+    com_send_float32(com, &set_point, 1);
     return 0;
 }
 
