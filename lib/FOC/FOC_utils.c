@@ -312,7 +312,7 @@ void foc_voltage_control_update(foc_t *hfoc) {
     // calculate current
     motor_calculate_current(&hfoc->motor);
     motor_get_current(&hfoc->motor, &hfoc->ia, &hfoc->ib, &hfoc->ic);
-    clarke_park_transform(hfoc->ia, hfoc->ib, sin_theta, cos_theta, &hfoc->id, &hfoc->iq);
+    clarke_park_transform_3input(hfoc->ia, hfoc->ib, hfoc->ic, sin_theta, cos_theta, &hfoc->id, &hfoc->iq);
 }
 
 void foc_current_control_update(foc_t *hfoc, float Ts) {
@@ -356,7 +356,7 @@ void foc_current_control_update(foc_t *hfoc, float Ts) {
     // pre calculate sin & cos
     pre_calc_sin_cos(hfoc->e_rad, &sin_theta, &cos_theta);
 
-    clarke_transform(ia, ib, &i_alpha, &i_beta);
+    clarke_transform_3input(ia, ib, ic, &i_alpha, &i_beta);
     park_transform(i_alpha, i_beta, sin_theta, cos_theta, &id, &iq);
     
     // LPF id & iq

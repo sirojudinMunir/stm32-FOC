@@ -9,6 +9,10 @@
 #include <string.h>
 #include <math.h>
 
+#ifndef TWO_PI
+#define TWO_PI 6.2831853f
+#endif
+
 #define AS5047P_REG_ANGLE  0x3FFF
 #define AS5047P_WRITE_CMD  0x4000
 
@@ -29,6 +33,18 @@ void AS5047P_spi_config(AS5047P_t *encd, int (*spi_transfer)(uint8_t*, uint8_t*,
 void AS5047P_init(AS5047P_t *encd, sensor_dir_t dir, float scale) {
     encd->dir = dir;
     encd->count_to_deg_scale = scale;
+}
+
+void AS5047P_set_angle_filter_fc(AS5047P_t *encd, float fc, float Ts) {
+    float tau = 1.0f / (TWO_PI * fc);
+    encd->angle_alpha_filter = Ts / (tau + Ts);
+    if (encd->angle_alpha_filter > 1.0f) encd->angle_alpha_filter = 1.0f;
+}
+
+void AS5047P_set_rpm_filter_fc(AS5047P_t *encd, float fc, float Ts) {
+    float tau = 1.0f / (TWO_PI * fc);
+    encd->rpm_alpha_filter = Ts / (tau + Ts);
+    if (encd->rpm_alpha_filter > 1.0f) encd->rpm_alpha_filter = 1.0f;
 }
 
 int AS5047P_start(AS5047P_t *encd) {
@@ -69,24 +85,26 @@ void AS5047P_calc_degree(AS5047P_t *encd) {
     encd->raw_pos = (encd->dir == SENSOR_DIR_NORMAL)? pos : (0x3FFF - pos);
     const float angle_raw = (float)encd->raw_pos * encd->count_to_deg_scale;
 
-    float angle_diff = angle_raw - encd->prev_raw_angle;
-    angle_diff -= 360.0f * floorf((angle_diff + 180.0f) / 360.0f);
+    // encd->angle_filtered = encd->angle_filtered * (1.0f - encd->angle_alpha_filter) + angle_raw * encd->angle_alpha_filter;
 
-    if (fabsf(angle_diff) > MAX_ANGLE_JUMP_DEG) {
-        if (++encd->spike_counter < SPIKE_REJECT_COUNT) {
-            return;
-        }
-        encd->spike_counter = 0;
-    } else {
-        encd->spike_counter = 0;
-    }
+    // float angle_diff = angle_raw - encd->prev_raw_angle;
+    // angle_diff -= 360.0f * floorf((angle_diff + 180.0f) / 360.0f);
 
-    encd->prev_raw_angle = angle_raw;
+    // if (fabsf(angle_diff) > MAX_ANGLE_JUMP_DEG) {
+    //     if (++encd->spike_counter < SPIKE_REJECT_COUNT) {
+    //         return;
+    //     }
+    //     encd->spike_counter = 0;
+    // } else {
+    //     encd->spike_counter = 0;
+    // }
+
+    // encd->prev_raw_angle = angle_raw;
 
     // Filter IIR dengan wrap-around
     float filtered_diff = angle_raw - encd->angle_filtered;
     filtered_diff -= 360.0f * floorf((filtered_diff + 180.0f) / 360.0f);
-    encd->angle_filtered += ANGLE_FILTER_ALPHA * filtered_diff;
+    encd->angle_filtered += encd->angle_alpha_filter * filtered_diff;
 
     if (encd->angle_filtered >= 360.0f)
         encd->angle_filtered -= 360.0f;
@@ -120,12 +138,12 @@ float AS5047P_get_rpm(AS5047P_t *encd, float Ts) {
     float rpm_instant = (angle_diff * 60.0f) / (Ts * DEGREES_PER_REV);
 
     // IIR Filter with dynamic weighting
-    float filtered = encd->filtered_rpm * (1.0f - RPM_FILTER_ALPHA) + rpm_instant * RPM_FILTER_ALPHA;
+    float filtered = encd->filtered_rpm * (1.0f - encd->rpm_alpha_filter) + rpm_instant * encd->rpm_alpha_filter;
 
     // Very low RPM clamping (0.1 RPM resolution)
-    if (fabsf(filtered) < 0.1f) {
-        filtered = 0.0f;
-    }
+    // if (fabsf(filtered) < 0.1f) {
+    //     filtered = 0.0f;
+    // }
 
     // Update state
     encd->prev_rpm = rpm_instant;

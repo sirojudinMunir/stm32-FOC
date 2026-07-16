@@ -22,16 +22,20 @@ float pi_control(PID_Controller_t *pi, float error) {
 
     float output = p_term + new_integral;
 
+    _Bool is_saturated = 0;
+
     // Anti-windup with clamping
     if (output > pi->out_max) {
         output = pi->out_max;
-        if (p_term < output)
-            pi->integral = output - p_term;
+        if (p_term < output) is_saturated = 1;
     }
     else if (output < pi->out_min) {
         output = pi->out_min;
-        if (p_term > output)
-            pi->integral = output - p_term;
+        if (p_term > output) is_saturated = 1;
+    }
+
+    if (is_saturated) {
+        pi->integral = output - p_term;
     }
     else {
         pi->integral = new_integral;
@@ -87,16 +91,20 @@ float pid_control(PID_Controller_t *pid, float error) {
     float pd_term = p_term + d_term;
     float output = pd_term + new_integral;
 
+    _Bool is_saturated = 0;
+
     // Anti-windup with clamping
     if (output > pid->out_max) {
         output = pid->out_max;
-        if (pd_term < output)
-            pid->integral = output - pd_term;
+        if (pd_term < output) is_saturated = 1;
     }
     else if (output < pid->out_min) {
         output = pid->out_min;
-        if (pd_term > output)
-            pid->integral = output - pd_term;
+        if (pd_term > output) is_saturated = 1;
+    }
+
+    if (is_saturated) {
+        pid->integral = output - pd_term;
     }
     else {
         pid->integral = new_integral;

@@ -17,7 +17,7 @@
 // Configurations (tune these based on your system)
 #define MIN_DT_US             500UL      // Minimum 1ms interval for valid RPM (avoid division by tiny numbers)
 #define MAX_RPM_JUMP          100.0f      // Conservative RPM jump threshold
-#define RPM_FILTER_ALPHA      0.02f //0.71539f      // Base filter coefficient (balanced response)
+#define RPM_FILTER_ALPHA      0.5f //0.71539f      // Base filter coefficient (balanced response)
 #define DEGREES_PER_REV       360.0f     // For 1:1 gear ratio
 #define MICROS_TO_MINUTES     6e7f       // Conversion factor (μs to minutes)
 

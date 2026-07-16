@@ -96,6 +96,11 @@ void clarke_transform(float ia, float ib, float *i_alpha, float *i_beta) {
     *i_beta  = ONE_BY_SQRT3 * ia + TWO_BY_SQRT3 * ib;
 }
 
+void clarke_transform_3input(float ia, float ib, float ic, float *i_alpha, float *i_beta) {
+    *i_alpha = 0.6666667f * (ia - 0.5f * ib - 0.5f * ic);
+    *i_beta  = 0.6666667f * SQRT3_BY_TWO * (ib - ic);
+}
+
 void park_transform(float i_alpha, float i_beta, float sin_theta, float cos_theta, float *id, float *iq) {
     // Park transform
     *id = i_alpha * cos_theta + i_beta * sin_theta;
@@ -109,6 +114,14 @@ void clarke_park_transform(float ia, float ib, float sin_theta, float cos_theta,
     float i_beta  = ONE_BY_SQRT3 * ia + TWO_BY_SQRT3 * ib;
 
     // Park transform
+    *id = i_alpha * cos_theta + i_beta * sin_theta;
+    *iq = i_beta * cos_theta - i_alpha * sin_theta;
+}
+
+void clarke_park_transform_3input(float ia, float ib, float ic, float sin_theta, float cos_theta, float *id, float *iq) {
+    float i_alpha = 0.6666667f * (ia - 0.5f * ib - 0.5f * ic);
+    float i_beta  = 0.6666667f * SQRT3_BY_TWO * (ib - ic);
+
     *id = i_alpha * cos_theta + i_beta * sin_theta;
     *iq = i_beta * cos_theta - i_alpha * sin_theta;
 }

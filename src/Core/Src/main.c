@@ -80,6 +80,7 @@ com_t husb_com;
 com_t hcan_com;
 
 char usb_send_buff[128];
+float data_plotter[4];
 
 /* USER CODE END PV */
 
@@ -216,13 +217,15 @@ static void init_motor(void) {
 static void init_encoder(void) {
   AS5047P_spi_config(&hencd1, motor1_as5047p_spi_transmit, motor1_as5047p_spi_cs);
   AS5047P_init(&hencd1, SENSOR_DIR_REVERSE, (360.0f / 16383.0f));
+  AS5047P_set_angle_filter_fc(&hencd1, 1000.0f, FOC_TS);
+  AS5047P_set_rpm_filter_fc(&hencd1, 50.0f, FOC_TS);
 }
 
 static void init_foc(void) {
   CAN_init(&hcan1);
 #if USB_TO_CAN
-  com_init(&husb_com, usb_recv_data, usb_send_data, &hfoc1, &hstorage1, &hsc1);
-  com_init(&hcan_com, can_recv_data, can_send_data, &hfoc1, &hstorage1, &hsc1);
+  com_init(&husb_com, usb_recv_data, usb_send_data, HAL_GetTick, &hfoc1, &hstorage1, &hsc1);
+  com_init(&hcan_com, can_recv_data, can_send_data, HAL_GetTick, &hfoc1, &hstorage1, &hsc1);
 #else
   init_trig_lut();
   link_set_pwm_freq(&htim1, BLDC_PWM_FREQ);
@@ -233,8 +236,8 @@ static void init_foc(void) {
   storage_init(&hstorage1, write_flash, read_flash);
   foc_inverter_init(&hfoc1, motor1_inverter_enable, motor1_inverter_disable, motor1_get_pwm_res);
   foc_feedback_sensor_init(&hfoc1, motor1_as5047p_get_mech_deg, motor1_as5047p_get_rpm);
-  com_init(&husb_com, usb_recv_data, usb_send_data, &hfoc1, &hstorage1, &hsc1);
-  com_init(&hcan_com, can_recv_data, can_send_data, &hfoc1, &hstorage1, &hsc1);
+  com_init(&husb_com, usb_recv_data, usb_send_data, HAL_GetTick, &hfoc1, &hstorage1, &hsc1);
+  com_init(&hcan_com, can_recv_data, can_send_data, HAL_GetTick, &hfoc1, &hstorage1, &hsc1);
 
   storage_read_config(&hstorage1);
   storage_copy_to_local(&hstorage1, &hfoc1);
@@ -242,24 +245,32 @@ static void init_foc(void) {
   // Id PI parameter
   pid_reset(&hfoc1.id_ctrl);
   pid_set_ts(&hfoc1.id_ctrl, FOC_TS);
-  // pid_set_kp(&hfoc1.id_ctrl, 0.02f);
-  // pid_set_ki(&hfoc1.id_ctrl, 12.0f);
-  // pid_set_deadband(&hfoc1.id_ctrl, 0.0f);
   // Id PI parameter
   pid_reset(&hfoc1.iq_ctrl);
   pid_set_ts(&hfoc1.iq_ctrl, FOC_TS);
-  // pid_set_kp(&hfoc1.iq_ctrl, 0.02f);
-  // pid_set_ki(&hfoc1.iq_ctrl, 12.0f);
-  // pid_set_deadband(&hfoc1.iq_ctrl, 0.0f);
-  
+  // Speed PID parameter
+  pid_reset(&hfoc1.speed_ctrl);
+  pid_set_ts(&hfoc1.speed_ctrl, SPEED_TS);
+  pid_set_kd(&hfoc1.speed_ctrl, 0);
+  pid_set_d_filter_fc(&hfoc1.speed_ctrl, 100.0f);
+  pid_set_max_d(&hfoc1.speed_ctrl, 10.0f);
+  // Position PID parameter
+  pid_reset(&hfoc1.pos_ctrl);
+  pid_set_ts(&hfoc1.pos_ctrl, POSITION_TS);
+  pid_set_d_filter_fc(&hfoc1.pos_ctrl, 20.0f);
+  pid_set_max_d(&hfoc1.pos_ctrl, 100.0f);
+  // field weakening
+  pid_reset(&hfoc1.fw_ctrl);
+  pid_set_ts(&hfoc1.fw_ctrl, FOC_TS);
+
   foc_motor_init(&hfoc1, POLE_PAIR, 360.0f);
 
-  // foc_set_mode(&hfoc1, FOC_MODE_SENSORED);
+  // foc_set_mode(&hfoc1, FOC_MODE_SENSORLESS_SMO_HFI_NEW);
   foc_sensorless_init(&hfoc1, BLDC_PWM_FREQ);
 
   foc_sensor_init(&hfoc1, ENCODER_OFFSET_RAD, NORMAL_DIR);
   foc_gear_reducer_init(&hfoc1, 1.0f);
-  foc_set_limit_current(&hfoc1, 1.0f);
+  foc_set_limit_current(&hfoc1, 10.0f);
 
   hfoc1.v_bus = 12.0f; 
 
@@ -404,8 +415,13 @@ int main(void)
     com_update(&hcan_com);
     self_commissioning_update();
 #endif
-    if (HAL_GetTick() - com_tick >= 10) {
+    if (HAL_GetTick() - com_tick >= 5) {
       com_tick = HAL_GetTick();
+      data_plotter[0] = hfoc1.e_rad;
+      data_plotter[1] = hfoc1.motor.ia;
+      data_plotter[2] = hfoc1.motor.ib;
+      data_plotter[3] = hfoc1.motor.ic;
+      com_update_plotter(&husb_com, data_plotter, 4);
       // uint8_t tx_buff[2] = {
       //   0xAA, 0x55
       // };

@@ -3,14 +3,17 @@ import serial
 import time
 import math
 
+HEADER = 0xA55A
+
 class MotorProtocol:
 
-    def __init__(self, port="COM4", baudrate=115200, timeout=2):
-        self.port = port
-        self.baudrate = baudrate
-        self.timeout = timeout
-        self.ser = None
-        self.connect()
+    def __init__(self, serial_conn):
+        # self.port = port
+        # self.baudrate = baudrate
+        # self.timeout = timeout
+        # self.ser = None
+        # self.connect()
+        self.ser = serial_conn
 
     # ================================================================
     # Serial Connection
@@ -49,46 +52,57 @@ class MotorProtocol:
     # ================================================================
     # Communication
 
+    def _read_header(self):
+        header = self.ser.read(2)
+        if len(header) != 2:
+            raise RuntimeError("Timeout menunggu header")
+        value = struct.unpack("<H", header)[0]
+        if value != HEADER:
+            raise RuntimeError(
+                f"Header salah: 0x{value:04X}"
+            )
+        
     def send_data(self, data):
         try:
-            if self.ser.is_open:
-                self.ser.write(data)
-                response = self.ser.read(1)
-                if response:
-                    error_code = struct.unpack('<b', response)[0]
-                    return error_code
+            if not self.ser or not self.ser.is_open:
                 return None
-        except serial.SerialException as e:
+            self.ser.write(data)
+            self._read_header()
+            response = self.ser.read(1)
+            if len(response) != 1:
+                raise RuntimeError("Timeout membaca ACK")
+            return struct.unpack("<b", response)[0]
+        except serial.SerialException:
             self.reconnect()
             return None
 
     def recv_float_data(self, cmd, n=1):
         try:
-            if self.ser.is_open:
-                self.ser.write(cmd)
-                response = self.ser.read(4 * n)
-                if len(response) != 4 * n:
-                    raise RuntimeError("Data float tidak lengkap")
-                data = struct.unpack("<" + "f" * n, response)
-                if n == 1:
-                    return data[0]
-                return data
-        except serial.SerialException as e:
+            if not self.ser or not self.ser.is_open:
+                return None
+            self.ser.write(cmd)
+            self._read_header()
+            response = self.ser.read(4 * n)
+            if len(response) != 4 * n:
+                raise RuntimeError("Data float tidak lengkap")
+            data = struct.unpack("<{}f".format(n), response)
+            return data[0] if n == 1 else data
+        except serial.SerialException:
             self.reconnect()
             return None
         
     def recv_uint8_data(self, cmd, n=1):
         try:
-            if self.ser.is_open:
-                self.ser.write(cmd)
-                response = self.ser.read(n)
-                if len(response) != n:
-                    raise RuntimeError("Data uint8 tidak lengkap")
-                data = struct.unpack("<" + "B" * n, response)
-                if n == 1:
-                    return data[0]
-                return data
-        except serial.SerialException as e:
+            if not self.ser or not self.ser.is_open:
+                return None
+            self.ser.write(cmd)
+            self._read_header()
+            response = self.ser.read(n)
+            if len(response) != n:
+                raise RuntimeError("Data uint8 tidak lengkap")
+            data = struct.unpack("<{}B".format(n), response)
+            return data[0] if n == 1 else data
+        except serial.SerialException:
             self.reconnect()
             return None
     

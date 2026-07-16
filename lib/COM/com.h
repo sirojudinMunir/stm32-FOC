@@ -25,16 +25,21 @@ typedef struct {
     _Bool incomming_data_flag;
     uint8_t *data_rx;
     uint32_t data_rx_len;
+    float *plotter_data;
+    uint8_t plotter_data_len;
+    uint32_t plotter_tick;
     foc_t *pfoc;
     storage_t *pstorage;
     self_commissioning_t *psc;
     _Bool send_data_pending;
     int (*recv_data)(uint8_t*, uint16_t);
     int (*send_data)(uint8_t*, uint16_t);
+    uint32_t (*get_tick_ms)(void);
 }com_t;
 
-void com_init(com_t *com, int (*recv_data)(uint8_t*, uint16_t), int (*send_data)(uint8_t*, uint16_t),
+void com_init(com_t *com, int (*recv_data)(uint8_t*, uint16_t), int (*send_data)(uint8_t*, uint16_t), uint32_t (*get_tick_ms)(void),
               foc_t *pfoc, storage_t *pstorage, self_commissioning_t *psc);
 void com_update(com_t *com);
+void com_update_plotter(com_t *com, float *data, uint8_t len);
 
 #endif // COM_H

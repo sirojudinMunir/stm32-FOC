@@ -23,5 +23,7 @@ def set_foc_bandwidth(bw=100):
     iq_ki = rs * omega
     print(f'id: kp={id_kp} ki={id_ki}')
     print(f'iq: kp={iq_kp} ki={iq_ki}')
+    motor.set_pid_id(id_kp, id_ki, 0)
+    motor.set_pid_iq(iq_kp, iq_ki, 0)
     
 

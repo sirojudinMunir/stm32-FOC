@@ -110,7 +110,8 @@ void storage_copy_to_local(storage_t *s, foc_t *hfoc) {
 
     hfoc->fw_ctrl.kp = s->memory.field_weakening.kp;
     hfoc->fw_ctrl.ki = s->memory.field_weakening.ki;
-    hfoc->fw_ctrl.out_min = s->memory.field_weakening.out_min;
+    pid_set_out_constraint(&hfoc->fw_ctrl, 0.0f, s->memory.field_weakening.out_min);
+    // hfoc->fw_ctrl.out_min = s->memory.field_weakening.out_min;
     hfoc->fw_enable = s->memory.field_weakening.enable;
     
     hfoc->mtpa_enable = s->memory.mtpa.enable;
