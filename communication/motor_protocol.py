@@ -7,13 +7,9 @@ HEADER = 0xA55A
 
 class MotorProtocol:
 
-    def __init__(self, serial_conn):
-        # self.port = port
-        # self.baudrate = baudrate
-        # self.timeout = timeout
-        # self.ser = None
-        # self.connect()
+    def __init__(self, serial_conn, acq_thread):
         self.ser = serial_conn
+        self.acq_thread = acq_thread
 
     # ================================================================
     # Serial Connection
@@ -51,60 +47,81 @@ class MotorProtocol:
 
     # ================================================================
     # Communication
-
-    def _read_header(self):
-        header = self.ser.read(2)
-        if len(header) != 2:
-            raise RuntimeError("Timeout menunggu header")
-        value = struct.unpack("<H", header)[0]
-        if value != HEADER:
-            raise RuntimeError(
-                f"Header salah: 0x{value:04X}"
-            )
         
     def send_data(self, data):
-        try:
-            if not self.ser or not self.ser.is_open:
-                return None
-            self.ser.write(data)
-            self._read_header()
-            response = self.ser.read(1)
-            if len(response) != 1:
-                raise RuntimeError("Timeout membaca ACK")
-            return struct.unpack("<b", response)[0]
-        except serial.SerialException:
-            self.reconnect()
-            return None
+        self.ser.write(data)
+        self.acq_thread.expect_response(1)
+        payload = self.acq_thread.response_queue.get(timeout=2)
+        return struct.unpack("<b", payload)[0]
 
     def recv_float_data(self, cmd, n=1):
-        try:
-            if not self.ser or not self.ser.is_open:
-                return None
-            self.ser.write(cmd)
-            self._read_header()
-            response = self.ser.read(4 * n)
-            if len(response) != 4 * n:
-                raise RuntimeError("Data float tidak lengkap")
-            data = struct.unpack("<{}f".format(n), response)
-            return data[0] if n == 1 else data
-        except serial.SerialException:
-            self.reconnect()
-            return None
+        self.ser.write(cmd)
+        self.acq_thread.expect_response(n*4)
+        payload = self.acq_thread.response_queue.get(timeout=2)
+        data = struct.unpack(
+            "<" + "f"*n,
+            payload
+        )
+        if n == 1:
+            return data[0]
+        return data
         
     def recv_uint8_data(self, cmd, n=1):
-        try:
-            if not self.ser or not self.ser.is_open:
-                return None
-            self.ser.write(cmd)
-            self._read_header()
-            response = self.ser.read(n)
-            if len(response) != n:
-                raise RuntimeError("Data uint8 tidak lengkap")
-            data = struct.unpack("<{}B".format(n), response)
-            return data[0] if n == 1 else data
-        except serial.SerialException:
-            self.reconnect()
-            return None
+        self.ser.write(cmd)
+        self.acq_thread.expect_response(n)
+        payload = self.acq_thread.response_queue.get(timeout=2)
+        data = struct.unpack(
+            "<" + "B"*n,
+            payload
+        )
+        if n == 1:
+            return data[0]
+        return data
+    
+    # ================================================================
+    PLOTTER_DICT = {
+        "ia":            0xA000,
+        "ib":            0xA001,
+        "ic":            0xA002,
+        "i_alpha":       0xA003,
+        "i_beta":        0xA004,
+        "id":            0xA005,
+        "iq":            0xA006,
+
+        "va":            0xA007,
+        "vb":            0xA008,
+        "vc":            0xA009,
+        "v_alpha":       0xA00A,
+        "v_beta":        0xA00B,
+        "vd":            0xA00C,
+        "vq":            0xA00D,
+
+        "e_rad":         0xA00E,
+        "actual_rpm":    0xA00F,
+        "actual_angle":  0xA010,
+
+        "Is_ref":        0xA011,
+        "rpm_ref":       0xA012,
+        "pos_ref":       0xA013,
+    }
+
+    def _get_plotter_addr(self, item):
+        if isinstance(item, str):
+            try:
+                return self.PLOTTER_DICT[item]
+            except KeyError:
+                raise ValueError(f"Unknown plotter item: {item}")
+        return int(item)
+
+    def plotter_add_line(self, item):
+        addr = self._get_plotter_addr(item)
+        data = bytes([7]) + struct.pack('<H', addr)
+        return self.send_data(data)
+    
+    def plotter_remove_line(self, item):
+        addr = self._get_plotter_addr(item)
+        data = bytes([8]) + struct.pack('<H', addr)
+        return self.send_data(data)
     
     # ================================================================
 

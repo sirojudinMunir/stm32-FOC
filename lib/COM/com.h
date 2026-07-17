@@ -11,6 +11,8 @@
 #include "self_commissioning.h"
 #include "storage.h"
 
+#define MAX_PLOTTER_LINE 10
+
 typedef enum {
     COM_DATA_TYPE_UINT8,
     COM_DATA_TYPE_INT8,
@@ -25,9 +27,11 @@ typedef struct {
     _Bool incomming_data_flag;
     uint8_t *data_rx;
     uint32_t data_rx_len;
-    float *plotter_data;
-    uint8_t plotter_data_len;
+    float plotter_data[MAX_PLOTTER_LINE];
     uint32_t plotter_tick;
+    uint16_t plotter_line_addr[MAX_PLOTTER_LINE];
+    uint8_t plotter_line_count;
+    uint8_t plotter_last_line_count;
     foc_t *pfoc;
     storage_t *pstorage;
     self_commissioning_t *psc;
@@ -40,6 +44,5 @@ typedef struct {
 void com_init(com_t *com, int (*recv_data)(uint8_t*, uint16_t), int (*send_data)(uint8_t*, uint16_t), uint32_t (*get_tick_ms)(void),
               foc_t *pfoc, storage_t *pstorage, self_commissioning_t *psc);
 void com_update(com_t *com);
-void com_update_plotter(com_t *com, float *data, uint8_t len);
 
 #endif // COM_H

@@ -14,29 +14,6 @@ int8_t com_send_value(com_t *com, void *value, uint16_t size) {
 
 /****************************************************************************** */
 
-int8_t com_send_plotter_update(com_t *com) {
-  if (com->plotter_data_len == 0 || com->plotter_data == NULL) {
-    return -1;
-  }
-  const uint16_t header = 0xABCD;
-  const uint16_t data_size = com->plotter_data_len * sizeof(float);
-  const uint16_t total_size = sizeof(header) + sizeof(uint8_t) + data_size;
-  uint8_t tx_buff[total_size];
-  uint16_t offset = 0;
-  memcpy(tx_buff + offset, &header, sizeof(header));
-  offset += sizeof(header);
-  tx_buff[offset++] = com->plotter_data_len;
-  memcpy(tx_buff + offset, com->plotter_data, data_size);
-  return (com->send_data(tx_buff, total_size) == 0) ? 0 : -1;
-}
-
-void com_update_plotter(com_t *com, float *data, uint8_t len) {
-  com->plotter_data = data;
-  com->plotter_data_len = len;
-}
-
-/****************************************************************************** */
-
 int8_t com_receive_value(com_t *com, void *var, uint32_t var_len) {
   int8_t ret_val = 0;
   if (com->data_rx_len == sizeof(uint8_t) + var_len) {
@@ -48,6 +25,112 @@ int8_t com_receive_value(com_t *com, void *var, uint32_t var_len) {
   return ret_val;
 }
 
+/****************************************************************************** */
+
+float plotter_get_value_from_dictionary(com_t *com, uint16_t dictionary_addr) {
+  float value = 0;
+  switch(dictionary_addr) {
+    case 0xA000: value = com->pfoc->ia; break;
+    case 0xA001: value = com->pfoc->ib; break;
+    case 0xA002: value = com->pfoc->ic; break;
+    case 0xA003: value = com->pfoc->i_alpha; break;
+    case 0xA004: value = com->pfoc->i_beta; break;
+    case 0xA005: value = com->pfoc->id; break;
+    case 0xA006: value = com->pfoc->iq; break;
+
+    case 0xA007: value = com->pfoc->va; break;
+    case 0xA008: value = com->pfoc->vb; break;
+    case 0xA009: value = com->pfoc->vc; break;
+    case 0xA00A: value = com->pfoc->v_alpha; break;
+    case 0xA00B: value = com->pfoc->v_beta; break;
+    case 0xA00C: value = com->pfoc->vd; break;
+    case 0xA00D: value = com->pfoc->vq; break;
+
+    case 0xA00E: value = com->pfoc->e_rad; break;
+    case 0xA00F: value = com->pfoc->actual_rpm; break;
+    case 0xA010: value = com->pfoc->actual_angle; break;
+
+    case 0xA011: value = com->pfoc->Is_ref; break;
+    case 0xA012: value = com->pfoc->rpm_ref; break;
+    case 0xA013: value = com->pfoc->pos_ref; break;
+  }
+  return value;
+}
+
+void plotter_add_line_addr(com_t *com, uint16_t dictionary_addr) {
+  if (com->plotter_line_count == MAX_PLOTTER_LINE || dictionary_addr == 0) return;
+  for (uint8_t i = 0; i < com->plotter_line_count; i++) {
+    if (com->plotter_line_addr[i] == dictionary_addr) {
+      return;
+    }
+  }
+  com->plotter_line_addr[com->plotter_line_count] = dictionary_addr;
+  com->plotter_line_count++;
+}
+
+void plotter_remove_line_by_addr(com_t *com, uint16_t dictionary_addr) {
+  if (com->plotter_line_count == 0) return;
+  uint8_t start_idx = MAX_PLOTTER_LINE;
+  for (uint8_t i = 0; i < com->plotter_line_count; i++) {
+    if (com->plotter_line_addr[i] == dictionary_addr) {
+      start_idx = i;
+      break;
+    }
+  }
+  for (uint8_t i = start_idx; i < (com->plotter_line_count - 1); i++) {
+    com->plotter_line_addr[i] = com->plotter_line_addr[i+1];
+  }
+  if (start_idx < MAX_PLOTTER_LINE) {
+    com->plotter_line_count--;
+  }
+}
+
+int8_t com_send_plotter_update(com_t *com) {
+  if (com->plotter_line_count == 0 && com->plotter_last_line_count == 0) {
+    return -1;
+  }
+  // memset(com->plotter_data, 0, sizeof(com->plotter_data));
+  for (uint8_t i = 0; i < com->plotter_line_count; i++) {
+    if (com->plotter_line_addr[i] != 0) {
+      com->plotter_data[i] = plotter_get_value_from_dictionary(com, com->plotter_line_addr[i]);
+    }
+  }
+
+  const uint16_t header = 0xABCD;
+  const uint16_t data_size = com->plotter_line_count * sizeof(float);
+  const uint16_t total_size = sizeof(header) + sizeof(uint8_t) + data_size;
+  uint8_t tx_buff[total_size];
+  uint16_t offset = 0;
+  memcpy(tx_buff + offset, &header, sizeof(header));
+  offset += sizeof(header);
+  tx_buff[offset++] = com->plotter_line_count;
+  memcpy(tx_buff + offset, com->plotter_data, data_size);
+  com->plotter_last_line_count = com->plotter_line_count;
+
+  return (com->send_data(tx_buff, total_size) == 0) ? 0 : -1;
+}
+
+/****************************************************************************** */
+
+int8_t com_plotter_add_line(com_t *com) {
+  uint16_t addr;
+  int8_t ret_val = com_receive_value(com, &addr, sizeof(uint16_t));
+  if (ret_val == 0) {
+    plotter_add_line_addr(com, addr);
+  }
+  com_send_value(com, &ret_val, sizeof(ret_val));
+  return ret_val;
+}
+
+int8_t com_plotter_remove_line(com_t *com) {
+  uint16_t addr;
+  int8_t ret_val = com_receive_value(com, &addr, sizeof(uint16_t));
+  if (ret_val == 0) {
+    plotter_remove_line_by_addr(com, addr);
+  }
+  com_send_value(com, &ret_val, sizeof(ret_val));
+  return ret_val;
+}
 
 /****************************************************************************** */
 
@@ -445,6 +528,8 @@ void com_update(com_t *com) {
   if (com->incomming_data_flag) {
     com->incomming_data_flag = 0;
     switch(com->data_rx[0]) {
+      case 7: com_plotter_add_line(com); break;
+      case 8: com_plotter_remove_line(com); break;
       case 9: com_set_default_config(com); break;
       case 10: com_save_config(com); break;
       case 11: com_set_foc_mode(com); break;

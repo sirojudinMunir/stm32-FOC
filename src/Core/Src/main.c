@@ -80,7 +80,6 @@ com_t husb_com;
 com_t hcan_com;
 
 char usb_send_buff[128];
-float data_plotter[4];
 
 /* USER CODE END PV */
 
@@ -398,8 +397,6 @@ int main(void)
 
   init_foc();
 
-  uint32_t com_tick = HAL_GetTick();
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -415,30 +412,6 @@ int main(void)
     com_update(&hcan_com);
     self_commissioning_update();
 #endif
-    if (HAL_GetTick() - com_tick >= 5) {
-      com_tick = HAL_GetTick();
-      data_plotter[0] = hfoc1.e_rad;
-      data_plotter[1] = hfoc1.motor.ia;
-      data_plotter[2] = hfoc1.motor.ib;
-      data_plotter[3] = hfoc1.motor.ic;
-      com_update_plotter(&husb_com, data_plotter, 4);
-      // uint8_t tx_buff[2] = {
-      //   0xAA, 0x55
-      // };
-      // CAN_Send(&hcan1, 0x02, tx_buff, 2);
-      // uint8_t usb_tx_buff[128];
-      // uint16_t ln = snprintf((char *)usb_tx_buff, sizeof(usb_tx_buff), 
-      //                       "%f %ld %ld %ld %f %f %f\r\n", 
-      //                       hfoc1.e_rad, 
-      //                       TIM1->CCR1, TIM1->CCR2, TIM1->CCR3, 
-      //                       hfoc1.motor.ia, hfoc1.motor.ib, hfoc1.motor.ic);
-      // uint16_t ln = snprintf((char *)usb_tx_buff, sizeof(usb_tx_buff), 
-      //                       "%f %f %f\r\n", 
-      //                       hfoc1.e_rad, hfoc1.actual_angle, hfoc1.actual_rpm);
-      // CDC_Transmit_FS(usb_tx_buff, ln);
-    }
-
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
