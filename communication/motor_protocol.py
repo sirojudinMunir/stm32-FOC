@@ -10,6 +10,7 @@ class MotorProtocol:
     def __init__(self, serial_conn, acq_thread):
         self.ser = serial_conn
         self.acq_thread = acq_thread
+        self.plotter_channels = []
 
     # ================================================================
     # Serial Connection
@@ -116,12 +117,20 @@ class MotorProtocol:
     def plotter_add_line(self, item):
         addr = self._get_plotter_addr(item)
         data = bytes([7]) + struct.pack('<H', addr)
-        return self.send_data(data)
+        ret = self.send_data(data)
+        if ret == 0:
+            self.plotter_channels.append(item)
+        return ret
     
     def plotter_remove_line(self, item):
         addr = self._get_plotter_addr(item)
         data = bytes([8]) + struct.pack('<H', addr)
-        return self.send_data(data)
+        ret = self.send_data(data)
+        if ret == 0:
+            # self.plotter_channels.remove(item)
+            idx = self.plotter_channels.index(item)
+            self.plotter_channels.pop(idx)
+        return ret
     
     # ================================================================
 

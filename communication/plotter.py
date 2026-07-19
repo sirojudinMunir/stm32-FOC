@@ -5,6 +5,7 @@ import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
 from collections import deque
 import serial
+import serial.tools.list_ports
 import threading
 import queue
 import time
@@ -13,11 +14,82 @@ import contextlib
 import traceback
 from motor_protocol import MotorProtocol
 import queue
+import colorsys
+
+class SerialPortDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Serial Port")
+        self.setModal(True)
+        self.setFixedWidth(400)
+        
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Label
+        label = QtWidgets.QLabel("Select Serial Port:")
+        layout.addWidget(label)
+        
+        # Combo box untuk port
+        self.port_combo = QtWidgets.QComboBox()
+        self.port_combo.setPlaceholderText("Select port...")
+        layout.addWidget(self.port_combo)
+        
+        # Refresh button
+        refresh_btn = QtWidgets.QPushButton("Refresh Ports")
+        refresh_btn.clicked.connect(self.refresh_ports)
+        layout.addWidget(refresh_btn)
+        
+        # Baudrate
+        baud_label = QtWidgets.QLabel("Baudrate:")
+        layout.addWidget(baud_label)
+        
+        self.baud_combo = QtWidgets.QComboBox()
+        self.baud_combo.addItems(['9600', '19200', '38400', '57600', '115200', '230400', '460800'])
+        self.baud_combo.setCurrentText('115200')
+        layout.addWidget(self.baud_combo)
+        
+        # Buttons
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        
+        # Refresh ports on show
+        self.refresh_ports()
+        
+        # Auto-select jika hanya ada satu port
+        if self.port_combo.count() == 1:
+            self.port_combo.setCurrentIndex(0)
+    
+    def refresh_ports(self):
+        self.port_combo.clear()
+        ports = serial.tools.list_ports.comports()
+        
+        if not ports:
+            self.port_combo.addItem("No ports found")
+            self.port_combo.setEnabled(False)
+        else:
+            self.port_combo.setEnabled(True)
+            for port in ports:
+                description = f"{port.device} - {port.description}"
+                self.port_combo.addItem(description, port.device)
+            
+            self.port_combo.setCurrentIndex(0)
+    
+    def get_selected_port(self):
+        if self.port_combo.currentIndex() >= 0:
+            return self.port_combo.currentData()
+        return None
+    
+    def get_baudrate(self):
+        return int(self.baud_combo.currentText())
+
 
 class DataAcquisitionThread(QtCore.QThread):
-    """Thread untuk membaca data dari serial port"""
-    
     data_received = QtCore.pyqtSignal(list)
+    connection_lost = QtCore.pyqtSignal()
     
     def __init__(self, serial_conn=None, parent=None):
         super().__init__(parent)
@@ -27,24 +99,33 @@ class DataAcquisitionThread(QtCore.QThread):
         self.raw_buffer = bytearray()
         self.response_queue = queue.Queue()
         self.expected_response_size = None
+        self.error_count = 0
+        self.max_errors = 10
         
     def run(self):
-        """Main loop untuk thread akuisisi data"""
         while self.running:
             try:
-                if self.serial_conn:
+                if self.serial_conn and self.serial_conn.is_open:
                     raw_data = self.serial_conn.read(self.serial_conn.in_waiting)
                     if raw_data:
                         self.raw_buffer.extend(raw_data)
+                        self.error_count = 0  # Reset error count on successful read
                 
                 self.parse_buffer()
                 QtCore.QThread.msleep(1)
                 
+            except serial.SerialException as e:
+                self.error_count += 1
+                print(f"Serial error: {e}")
+                if self.error_count >= self.max_errors:
+                    print("Too many serial errors, emitting connection_lost")
+                    self.connection_lost.emit()
+                    break
+                QtCore.QThread.msleep(100)
             except Exception as e:
                 print(f"Error di thread akuisisi: {e}")
                 QtCore.QThread.msleep(10)
     
-
     def expect_response(self, size):
         self.expected_response_size = size
 
@@ -88,51 +169,33 @@ class DataAcquisitionThread(QtCore.QThread):
                 self.raw_buffer.pop(0)
     
     def stop(self):
-        """Stop thread"""
         self.running = False
-        if self.serial_conn:
+        if self.serial_conn and self.serial_conn.is_open:
             self.serial_conn.close()
         self.wait()
 
 
 class LivePlotter(QtWidgets.QMainWindow):
-    """Main window untuk live plotting"""
-    
     def __init__(self, max_points=1000, port=None, baudrate=115200):
         super().__init__()
         
-        serial_conn = serial.Serial(
-            port,
-            baudrate,
-            timeout=0.001
-        )
-
         self.max_points = max_points
+        self.serial_conn = None
+        self.acq_thread = None
+        self.is_connected = False
         
         # Setup UI
         self.setup_ui()
         
         # Buffer untuk data
         self.time_buffer = deque(maxlen=max_points)
-        self.data_buffers = []
+        self.data_buffers = []  # Akan diisi sesuai channel
         self.counter = 0
         
         # Timer untuk update plot
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update_plot)
         self.timer.start(10)  # Update setiap 10ms (100 FPS)
-        
-        # Start acquisition thread
-        self.acq_thread = DataAcquisitionThread(
-            serial_conn=serial_conn
-        )
-        self.acq_thread.data_received.connect(self.on_data_received)
-        self.acq_thread.start()
-        
-        self.motor = MotorProtocol(
-            serial_conn,
-            self.acq_thread
-        )
         
         # Setup performance timer
         self.last_update = time.time()
@@ -143,23 +206,49 @@ class LivePlotter(QtWidgets.QMainWindow):
         self.fps_timer.start(1000)  # Update FPS setiap 1 detik
         
         # Status
-        self.status_label = QtWidgets.QLabel("Ready")
+        self.status_label = QtWidgets.QLabel("Not Connected")
         self.statusBar().addWidget(self.status_label)
         
+        # Console namespace
         self.console_namespace = {
             "plotter": self,
             "thread": self.acq_thread,
-            "motor": self.motor,
+            "motor": self.motor if hasattr(self, 'motor') else None,
             "np": np,
             "pg": pg,
         }
-
         self.setup_console_completion()
 
+        self.channels = {}
+        self.used_colors = set()
+        self.available_colors = [
+            (255, 0, 0),      # Red
+            (0, 0, 255),      # Blue
+            (0, 255, 0),      # Green
+            (255, 165, 0),    # Orange
+            (128, 0, 128),    # Purple
+            (255, 192, 203),  # Pink
+            (0, 255, 255),    # Cyan
+            (255, 0, 255),    # Magenta
+            (255, 255, 0),    # Yellow
+            (0, 128, 128),    # Teal
+            (128, 128, 0),    # Olive
+            (128, 0, 0),      # Maroon
+            (0, 0, 128),      # Navy
+            (0, 128, 0),      # Forest Green
+        ]
+        self.color_index = 0
+
+        # Try auto-connect if port specified
+        if port:
+            self.connect_serial(port, baudrate)
+        else:
+            # Show connection dialog after UI is ready
+            QtCore.QTimer.singleShot(100, self.show_connection_dialog)
+        
         print(f"LivePlotter initialized")
     
     def setup_ui(self):
-        """Setup user interface"""
         self.setWindowTitle('Live Plotter - PyQtGraph')
         self.setGeometry(100, 100, 1200, 600)
         
@@ -171,6 +260,19 @@ class LivePlotter(QtWidgets.QMainWindow):
         # Toolbar
         toolbar = QtWidgets.QToolBar()
         self.addToolBar(toolbar)
+        
+        # Connect button
+        self.connect_action = QtWidgets.QAction('Connect', self)
+        self.connect_action.triggered.connect(self.show_connection_dialog)
+        toolbar.addAction(self.connect_action)
+        
+        # Disconnect button
+        self.disconnect_action = QtWidgets.QAction('Disconnect', self)
+        self.disconnect_action.triggered.connect(self.disconnect_serial)
+        self.disconnect_action.setEnabled(False)
+        toolbar.addAction(self.disconnect_action)
+        
+        toolbar.addSeparator()
         
         # Plot widget
         self.plot_widget = pg.PlotWidget()
@@ -217,28 +319,6 @@ class LivePlotter(QtWidgets.QMainWindow):
         self.console_input.setPlaceholderText(">>>")
         self.console_input.returnPressed.connect(self.execute_command)
         layout.addWidget(self.console_input)
-        
-        # Setup plot lines
-        # colors = [
-        #     (255, 0, 0),    # Red
-        #     (0, 0, 255),    # Blue
-        #     (0, 255, 0),    # Green
-        #     (255, 165, 0),  # Orange
-        #     (128, 0, 128),  # Purple
-        #     (255, 192, 203),# Pink
-        #     (0, 255, 255),  # Cyan
-        #     (255, 0, 255)   # Magenta
-        # ]
-        
-        self.lines = []
-        # for i in range(self.num_channels):
-        #     pen = pg.mkPen(color=colors[i % len(colors)], width=1.5)
-        #     line = self.plot_widget.plot(
-        #         [], [], 
-        #         pen=pen, 
-        #         name=f'CH{i+1}'
-        #     )
-        #     self.lines.append(line)
 
     def setup_console_completion(self):
         words = self.build_completion()
@@ -257,11 +337,12 @@ class LivePlotter(QtWidgets.QMainWindow):
     def build_completion(self):
         words = []
         for name, obj in self.console_namespace.items():
-            words.append(name)
-            for attr in dir(obj):
-                if attr.startswith("_"):
-                    continue
-                words.append(f"{name}.{attr}")
+            if obj is not None:
+                words.append(name)
+                for attr in dir(obj):
+                    if attr.startswith("_"):
+                        continue
+                    words.append(f"{name}.{attr}")
         return sorted(words)
         
     def execute_command(self):
@@ -284,78 +365,188 @@ class LivePlotter(QtWidgets.QMainWindow):
                 traceback.format_exc()
             )
         self.console_input.clear()
+    
+    def show_connection_dialog(self):
+        dialog = SerialPortDialog(self)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            port = dialog.get_selected_port()
+            baudrate = dialog.get_baudrate()
+            if port:
+                self.connect_serial(port, baudrate)
+    
+    def connect_serial(self, port, baudrate):
+        try:
+            # Close existing connection if any
+            self.disconnect_serial()
+            
+            # Create new serial connection
+            self.serial_conn = serial.Serial(port, baudrate, timeout=0.001)
+            print(f"Connected to {port} at {baudrate} baud")
+            
+            # Start acquisition thread
+            self.acq_thread = DataAcquisitionThread(serial_conn=self.serial_conn)
+            self.acq_thread.data_received.connect(self.on_data_received)
+            self.acq_thread.connection_lost.connect(self.handle_connection_lost)
+            self.acq_thread.start()
+            
+            # Initialize motor protocol
+            self.motor = MotorProtocol(self.serial_conn, self.acq_thread)
+            
+            # Update console namespace
+            self.console_namespace["thread"] = self.acq_thread
+            self.console_namespace["motor"] = self.motor
+            self.setup_console_completion()
+            
+            # Update UI
+            self.is_connected = True
+            self.connect_action.setEnabled(False)
+            self.disconnect_action.setEnabled(True)
+            self.status_label.setText(f"Connected to {port} at {baudrate} baud")
+            
+            print("Serial connection established successfully")
+
+            # setup plotter
+            motor_mode = self.motor.get_foc_motor_mode()
+            if motor_mode == 0:
+                self.motor.plotter_add_line('Is_ref')
+                self.motor.plotter_add_line('id')
+                self.motor.plotter_add_line('iq')
+            elif motor_mode == 1:
+                self.motor.plotter_add_line('rpm_ref')
+                self.motor.plotter_add_line('actual_rpm')
+            elif motor_mode == 2:
+                self.motor.plotter_add_line('pos_ref')
+                self.motor.plotter_add_line('actual_angle')
+
+            
+        except serial.SerialException as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Connection Error",
+                f"Failed to connect to {port}:\n{str(e)}"
+            )
+            self.status_label.setText(f"Connection failed: {str(e)}")
+            print(f"Connection error: {e}")
+    
+    def disconnect_serial(self):
+        if self.acq_thread:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        
+        if self.serial_conn and self.serial_conn.is_open:
+            self.serial_conn.close()
+            self.serial_conn = None
+        
+        self.is_connected = False
+        self.connect_action.setEnabled(True)
+        self.disconnect_action.setEnabled(False)
+        self.status_label.setText("Disconnected")
+        
+        # Update console namespace
+        self.console_namespace["thread"] = None
+        self.console_namespace["motor"] = None
+        self.setup_console_completion()
+        
+        print("Disconnected from serial port")
+    
+    def handle_connection_lost(self):
+        QtWidgets.QMessageBox.warning(
+            self,
+            "Connection Lost",
+            "Serial connection has been lost. Please reconnect."
+        )
+        self.disconnect_serial()
+
+    def get_next_color(self):
+        for color in self.available_colors:
+            if color not in self.used_colors:
+                self.used_colors.add(color)
+                return color
+        
+        color = self.available_colors[self.color_index % len(self.available_colors)]
+        self.color_index += 1
+        return color
+    
+    def release_color(self, color):
+        if color in self.used_colors:
+            self.used_colors.remove(color)
 
     def on_data_received(self, values):
-        if self.paused:
+        if self.paused or not self.is_connected:
             return
+
         self.counter += 1
         self.time_buffer.append(self.counter)
-        colors = [
-            (255, 0, 0),      # Red
-            (0, 0, 255),      # Blue
-            (0, 255, 0),      # Green
-            (255, 165, 0),    # Orange
-            (128, 0, 128),    # Purple
-            (255, 192, 203),  # Pink
-            (0, 255, 255),    # Cyan
-            (255, 0, 255)     # Magenta
-        ]
 
-        while len(self.data_buffers) > len(values):
-            self.data_buffers.pop()
-            line = self.lines.pop()
-            line.clear()
-            self.plot_widget.removeItem(line)
+        # remove channel
+        for name in list(self.channels.keys()):
+            if name not in self.motor.plotter_channels:
+                ch = self.channels.pop(name)
+                ch["line"].clear()
+                self.plot_widget.removeItem(ch["line"])
+                if "color" in ch:
+                    self.release_color(ch["color"])
+                if name in self.data_buffers:
+                    self.data_buffers.remove(name)
 
-        # Tambah channel jika diperlukan
-        while len(self.data_buffers) < len(values):
-            idx = len(self.data_buffers)
-            buffer = deque(maxlen=self.max_points)
-            if len(self.time_buffer) > 1:
-                buffer.extend(
-                    [np.nan] * (len(self.time_buffer)-1)
+        # add channel
+        for idx, name in enumerate(self.motor.plotter_channels):
+            if name not in self.channels:
+                buffer = deque(
+                    [np.nan] * (len(self.time_buffer)-1),
+                    maxlen=self.max_points
                 )
-            self.data_buffers.append(buffer)
-            pen = pg.mkPen(
-                color=colors[idx % len(colors)],
-                width=1.5
-            )
-            line = self.plot_widget.plot(
-                [],
-                [],
-                pen=pen,
-                name=f"CH{idx+1}"
-            )
-            self.lines.append(line)
-        # Simpan data
-        for i, val in enumerate(values):
-            self.data_buffers[i].append(val)
+                self.data_buffers.append(buffer)
+                
+                color = self.get_next_color()
+                
+                pen = pg.mkPen(
+                    color=color,
+                    width=1.5
+                )
+                line = self.plot_widget.plot(
+                    [],
+                    [],
+                    pen=pen,
+                    name=name
+                )
+                self.channels[name] = {
+                    "line": line,
+                    "buffer": buffer,
+                    "color": color
+                }
+
+        for idx, name in enumerate(self.motor.plotter_channels):
+            if idx < len(values):
+                self.channels[name]["buffer"].append(values[idx])
+            else:
+                self.channels[name]["buffer"].append(np.nan)
+
         self.status_label.setText(
             f"Received {len(values)} values"
         )
     
     def update_plot(self):
-        """Update plot dengan data terbaru"""
-        if self.paused:
-            return
-        
-        # Cek apakah ada data baru
-        has_data = any(len(buf) > 0 for buf in self.data_buffers)
-        if not has_data:
+        if self.paused or not self.is_connected:
             return
         
         # Update setiap line
-        for i, line in enumerate(self.lines):
-            # if len(self.data_buffers[i]) > 0:
-            # Konversi ke numpy array untuk performa
-            x_data = np.array(list(self.time_buffer))
-            y_data = np.array(list(self.data_buffers[i]))
-            line.setData(x_data, y_data)
+        x = np.asarray(self.time_buffer)
+        for name in self.motor.plotter_channels:
+            if name not in self.channels:
+                continue
+            ch = self.channels[name]
+            y = np.asarray(ch["buffer"])
+            n = min(len(x), len(y))
+            if n == 0:
+                continue
+            ch["line"].setData(x[-n:], y[-n:])
         
         # Set X range
-        x_min = max(0, self.counter - self.max_points)
-        x_max = self.counter
-        self.plot_widget.setXRange(x_min, x_max, padding=0.05)
+        if len(self.time_buffer) > 0:
+            x_min = max(0, self.counter - self.max_points)
+            x_max = self.counter
+            self.plot_widget.setXRange(x_min, x_max, padding=0.05)
 
         # Auto-range jika diperlukan
         if self.auto_range_check.isChecked():
@@ -366,74 +557,73 @@ class LivePlotter(QtWidgets.QMainWindow):
         self.fps_counter += 1
     
     def auto_range(self):
-        """Auto scale plot"""
         if len(self.time_buffer) > 0:
-            # Set Y range berdasarkan semua channel
             all_values = []
+            
+            for name in self.motor.plotter_channels:
+                if name in self.channels:
+                    buffer = self.channels[name]["buffer"]
+                    all_values.extend(buffer)
 
-            for buf in self.data_buffers:
-                all_values.extend(buf)
-
+            if not all_values:
+                return
+                
             all_values = np.asarray(all_values, dtype=float)
-
-            # Buang NaN
             all_values = all_values[~np.isnan(all_values)]
 
-            # Tidak ada data valid
             if all_values.size == 0:
                 return
 
             y_min = np.min(all_values)
             y_max = np.max(all_values)
-
+            
+            padding = max(1, (y_max - y_min) * 0.1)
             self.plot_widget.setYRange(
-                y_min - 1,
-                y_max + 1
+                y_min - padding,
+                y_max + padding
             )
     
     def update_fps(self):
-        """Update FPS counter"""
         self.fps_result = self.fps_counter
         self.fps_counter = 0
     
     def clear_data(self):
-        """Clear all data"""
-        for buffer in self.data_buffers:
-            buffer.clear()
+        for name in self.channels:
+            self.channels[name]["buffer"].clear()
         self.time_buffer.clear()
         self.counter = 0
         
-        for line in self.lines:
-            line.setData([], [])
+        for name in self.channels:
+            self.channels[name]["line"].setData([], [])
         
         print("Data cleared")
     
     def toggle_pause(self):
-        """Toggle pause/resume"""
         self.paused = not self.paused
         self.pause_button.setText('Resume' if self.paused else 'Pause')
         print(f"Plot {'paused' if self.paused else 'resumed'}")
     
     def closeEvent(self, event):
-        """Handle window close"""
         print("Closing application...")
-        self.acq_thread.stop()
+        self.disconnect_serial()
+        
+        if hasattr(self, 'timer'):
+            self.timer.stop()
+        if hasattr(self, 'fps_timer'):
+            self.fps_timer.stop()
+            
         event.accept()
 
 
 def main():
-    """Main function"""
-    # Setup Qt application
     app = QtWidgets.QApplication(sys.argv)
     app.setStyle('Fusion')
     
-    # Setup PyQtGraph
-    pg.setConfigOptions(antialias=True, useOpenGL=True)  # Enable OpenGL for speed
+    pg.setConfigOptions(antialias=True, useOpenGL=True)
     
-    # Buat plotter
     plotter = LivePlotter(
         max_points=1000,
-        port="COM4",  # Ganti dengan 'COM3' atau '/dev/ttyUSB0' untuk data real
+        port=None,  # No auto-connect
         baudrate=115200
     )
     
